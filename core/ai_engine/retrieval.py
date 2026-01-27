@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 # DAFTAR MODEL (FALLBACK STRATEGY)
 # =========================================================
 BACKUP_MODELS = [
-    os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free"),
+    os.environ.get("OPENROUTER_MODEL", "liquid/lfm-2.5-1.2b-thinking:free"),
     # 2. BACKUP 1 
-    "xiaomi/mimo-v2-flash:free",
+    "mistralai/devstral-2512:free",
     
     # 3. BACKUP 2 
     "nvidia/nemotron-3-nano-30b-a3b:free",

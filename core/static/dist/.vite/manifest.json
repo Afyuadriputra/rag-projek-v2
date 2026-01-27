@@ -1,0 +1,23 @@
+{
+  "node_modules/@locator/runtime/dist/components/Runtime.js": {
+    "file": "Runtime-CioVxzKO.js",
+    "name": "Runtime",
+    "src": "node_modules/@locator/runtime/dist/components/Runtime.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "src/main.tsx"
+    ]
+  },
+  "src/main.tsx": {
+    "file": "main-BiOWeq9C.js",
+    "name": "main",
+    "src": "src/main.tsx",
+    "isEntry": true,
+    "dynamicImports": [
+      "node_modules/@locator/runtime/dist/components/Runtime.js"
+    ],
+    "css": [
+      "main-vng8tReE.css"
+    ]
+  }
+}

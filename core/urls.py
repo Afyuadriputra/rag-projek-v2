@@ -13,4 +13,6 @@ urlpatterns = [
     # --- API ENDPOINTS ---
     path('api/upload/', views.upload_api, name='upload_api'),
     path('api/chat/', views.chat_api, name='chat_api'),
+    path('api/documents/', views.documents_api, name='documents_api'),
+
 ]

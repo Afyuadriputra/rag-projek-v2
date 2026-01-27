@@ -1,0 +1,222 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { cn } from "@/lib/utils";
+
+export type ChatRole = "assistant" | "user";
+
+export type ChatItem = {
+  id: string;
+  role: ChatRole;
+  text: string;
+  time?: string; // "HH:MM"
+};
+
+function normalizeText(text: string) {
+  return (text ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+// --- 1. Custom Animation Styles (Inject CSS) ---
+const animationStyles = `
+  @keyframes slideUpFade {
+    0% { opacity: 0; transform: translateY(8px) scale(0.98); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes pulse-subtle {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+    50% { box-shadow: 0 0 0 2px rgba(0,0,0,0.05); }
+  }
+  @keyframes bounce-slow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  .animate-entry {
+    animation: slideUpFade 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  }
+  .animate-pulse-subtle {
+    animation: pulse-subtle 3s infinite ease-in-out;
+  }
+  .dot-1 { animation: bounce-slow 1s infinite 0ms; }
+  .dot-2 { animation: bounce-slow 1s infinite 200ms; }
+  .dot-3 { animation: bounce-slow 1s infinite 400ms; }
+`;
+
+export default function ChatBubble({ item }: { item: ChatItem }) {
+  const isUser = item.role === "user";
+  const content = normalizeText(item.text);
+
+  return (
+    <>
+      <style>{animationStyles}</style>
+      
+      <div
+        className={cn(
+          "animate-entry flex w-full gap-2 md:gap-4 opacity-0", // opacity-0 awal agar transisi mulus
+          "items-start",
+          isUser ? "flex-row-reverse" : "flex-row"
+        )}
+      >
+        {/* --- AVATAR --- */}
+        <div className="flex-shrink-0 mt-1">
+          {isUser ? (
+            <div className="flex size-8 md:size-10 items-center justify-center rounded-full border border-zinc-200 bg-white shadow-sm">
+              <span className="material-symbols-outlined text-[18px] text-zinc-700">
+                person
+              </span>
+            </div>
+          ) : (
+            <div className="animate-pulse-subtle flex size-8 md:size-10 items-center justify-center rounded-xl bg-zinc-900 shadow-md shadow-zinc-900/10">
+              <span className="material-symbols-outlined text-[18px] text-white">
+                smart_toy
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* --- CONTENT WRAPPER --- */}
+        <div
+          className={cn(
+            "flex flex-col",
+            "max-w-[90%] md:max-w-[75%] lg:max-w-[65%]",
+            isUser ? "items-end" : "items-start"
+          )}
+        >
+          {/* Meta Info */}
+          <div
+            className={cn(
+              "mb-1.5 flex items-center gap-2 opacity-80 select-none",
+              isUser ? "flex-row-reverse" : "flex-row"
+            )}
+          >
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:text-[11px]">
+              {isUser ? "Mahasiswa" : "Academic AI"}
+            </span>
+            <span className="text-[10px] text-zinc-400 md:text-[11px]">
+              {item.time}
+            </span>
+          </div>
+
+          {/* --- BUBBLE BOX --- */}
+          <div
+            className={cn(
+              "relative overflow-hidden shadow-sm transition-all duration-300",
+              "px-4 py-3 md:px-6 md:py-4",
+              isUser
+                ? "rounded-2xl rounded-tr-sm bg-zinc-900 text-zinc-50 hover:bg-black"
+                : "rounded-2xl rounded-tl-sm border border-zinc-200 bg-white text-zinc-800 hover:border-zinc-300"
+            )}
+          >
+            {isUser ? (
+              // USER TEXT
+              <div className="whitespace-pre-wrap text-[14px] font-normal leading-relaxed md:text-[15px]">
+                {content}
+              </div>
+            ) : (
+              // AI MARKDOWN
+              <div className="prose prose-zinc max-w-none text-[14px] leading-relaxed md:text-[15px]">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({ children }) => <h1 className="mb-3 mt-1 text-lg font-bold text-zinc-900">{children}</h1>,
+                    h2: ({ children }) => <h2 className="mb-2 mt-4 text-base font-bold text-zinc-900">{children}</h2>,
+                    h3: ({ children }) => <h3 className="mb-2 mt-3 text-sm font-bold text-zinc-900">{children}</h3>,
+                    p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                    ul: ({ children }) => <ul className="mb-3 list-disc space-y-1 pl-4 md:pl-5 marker:text-zinc-400">{children}</ul>,
+                    ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1 pl-4 md:pl-5 marker:text-zinc-400">{children}</ol>,
+                    li: ({ children }) => <li className="pl-1">{children}</li>,
+                    strong: ({ children }) => <strong className="font-semibold text-zinc-900">{children}</strong>,
+                    em: ({ children }) => <em className="italic text-zinc-600">{children}</em>,
+                    blockquote: ({ children }) => (
+                      <blockquote className="my-4 border-l-4 border-zinc-300 bg-zinc-50 px-4 py-2 italic text-zinc-600">
+                        {children}
+                      </blockquote>
+                    ),
+                    hr: () => <hr className="my-6 border-zinc-200" />,
+                    code: ({ inline, className, children }: any) => {
+                      if (inline) {
+                        return <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-[13px] font-medium text-pink-600 border border-zinc-200">{children}</code>;
+                      }
+                      return (
+                        <div className="group relative my-4 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-md">
+                          <div className="flex items-center justify-between bg-zinc-800/50 px-3 py-1.5 text-xs text-zinc-400">
+                            <span>Snippet</span>
+                          </div>
+                          <div className="overflow-x-auto p-4">
+                            <code className={cn("text-xs text-zinc-100 md:text-sm font-mono", className)}>{children}</code>
+                          </div>
+                        </div>
+                      );
+                    },
+                    table: ({ children }) => (
+                      <div className="my-4 overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[300px] border-collapse text-left text-sm">{children}</table>
+                        </div>
+                      </div>
+                    ),
+                    thead: ({ children }) => <thead className="bg-zinc-50 text-zinc-700">{children}</thead>,
+                    tbody: ({ children }) => <tbody className="divide-y divide-zinc-100 bg-white">{children}</tbody>,
+                    tr: ({ children }) => <tr className="hover:bg-zinc-50/50 transition-colors">{children}</tr>,
+                    th: ({ children }) => <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-zinc-500 border-b border-zinc-200">{children}</th>,
+                    td: ({ children }) => <td className="px-4 py-3 text-zinc-600 align-top">{children}</td>,
+                  }}
+                >
+                  {content}
+                </ReactMarkdown>
+
+                {/* Footer Actions */}
+                <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+                    <span className="material-symbols-outlined text-[14px]">verified_user</span>
+                    Sumber Terverifikasi
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(content)}
+                    className="group flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 active:scale-95"
+                    title="Salin jawaban"
+                  >
+                    <span className="material-symbols-outlined text-[14px] text-zinc-400 group-hover:text-zinc-800">content_copy</span>
+                    Salin
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// --- 2. Typing Indicator Component (Exported) ---
+// Gunakan ini di ChatThread saat loading: {loading && <TypingBubble />}
+export function TypingBubble() {
+  return (
+    <div className="animate-entry flex w-full items-start gap-2 md:gap-4 opacity-0">
+      {/* Avatar AI */}
+      <div className="flex-shrink-0 mt-1">
+        <div className="flex size-8 md:size-10 items-center justify-center rounded-xl bg-zinc-900 shadow-md">
+          <span className="material-symbols-outlined text-[18px] text-white">smart_toy</span>
+        </div>
+      </div>
+
+      {/* Bubble */}
+      <div className="flex flex-col items-start max-w-[90%] md:max-w-[75%]">
+        <div className="mb-1.5 flex items-center gap-2 opacity-80">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 md:text-[11px]">
+            Academic AI
+          </span>
+          <span className="text-[10px] text-zinc-400 md:text-[11px]">Sedang mengetik...</span>
+        </div>
+        
+        <div className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white px-4 py-3 shadow-sm md:px-6 md:py-4">
+          <div className="flex items-center gap-1">
+            <div className="dot-1 h-2 w-2 rounded-full bg-zinc-400" />
+            <div className="dot-2 h-2 w-2 rounded-full bg-zinc-400" />
+            <div className="dot-3 h-2 w-2 rounded-full bg-zinc-400" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

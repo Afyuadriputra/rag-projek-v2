@@ -1,0 +1,55 @@
+{% load django_vite %}
+
+<!DOCTYPE html>
+<html lang="id" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="Academic AI — RAG Chatbot untuk analisis dokumen akademik." />
+
+  <title>Academic AI</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
+
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,300,0,0&display=swap"
+  />
+
+  <style>
+    :root {
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      text-rendering: geometricPrecision;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .material-symbols-outlined {
+      font-variation-settings: "opsz" 24, "wght" 300, "FILL" 0, "GRAD" 0;
+      line-height: 1;
+      vertical-align: middle;
+      user-select: none;
+    }
+
+    /* --- TAMBAHAN: Utility untuk menyembunyikan scrollbar di Textarea --- */
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+    .scrollbar-hide {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+    }
+  </style>
+
+  {% vite_hmr_client %}
+  {% vite_react_refresh %}
+  {% vite_asset 'src/main.tsx' %}
+</head>
+
+<body class="bg-zinc-50 text-zinc-900 antialiased selection:bg-black selection:text-white">
+  {% block inertia %}{% endblock inertia %}
+</body>
+</html>
