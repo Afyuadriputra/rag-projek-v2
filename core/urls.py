@@ -14,5 +14,7 @@ urlpatterns = [
     path('api/upload/', views.upload_api, name='upload_api'),
     path('api/chat/', views.chat_api, name='chat_api'),
     path('api/documents/', views.documents_api, name='documents_api'),
+    path('api/reingest/', views.reingest_api, name='reingest_api'),
+
 
 ]

@@ -1,18 +1,74 @@
+import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 import { cn } from "@/lib/utils";
 
 export type ChatRole = "assistant" | "user";
+
+export type ChatSource = {
+  source: string;
+  snippet: string;
+};
 
 export type ChatItem = {
   id: string;
   role: ChatRole;
   text: string;
   time?: string; // "HH:MM"
+  sources?: ChatSource[]; // ✅ NEW: rujukan dari backend (optional)
 };
 
 function normalizeText(text: string) {
   return (text ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+/**
+ * Normalize Markdown agar tetap rapi meskipun model berbeda.
+ * - Rapikan spacing heading & list
+ * - Pastikan ada newline sebelum heading
+ * - Kurangi “tabel tab-separated” yang sering keluar dari model (tetap tampil rapi via fallback <pre>)
+ */
+function normalizeMarkdown(md: string) {
+  let s = normalizeText(md);
+
+  // Normalisasi newline berlebihan
+  s = s.replace(/\n{3,}/g, "\n\n");
+
+  // Pastikan heading selalu diawali newline (biar tidak nempel ke paragraf)
+  s = s.replace(/([^\n])\n(##\s+)/g, "$1\n\n$2");
+  s = s.replace(/([^\n])\n(###\s+)/g, "$1\n\n$2");
+
+  // Normalize bullet list: kadang model pakai "•" / "-" tanpa spasi
+  s = s.replace(/^\s*•\s?/gm, "- ");
+  s = s.replace(/^\s*-\s{0,1}(?=\S)/gm, "- ");
+
+  // Normalize "Opsi cepat" chips: [..] tetap satu baris per item (lebih enak dibaca)
+  // Jika model menulis: "- [A] [B]" -> pecah jadi baris
+  s = s.replace(/-\s*(\[[^\]]+\])\s+(\[[^\]]+\])/g, "- $1\n- $2");
+
+  return s;
+}
+
+function toPlainString(children: any): string {
+  if (children == null) return "";
+  if (typeof children === "string") return children;
+  if (Array.isArray(children)) return children.map(toPlainString).join("");
+  return String(children);
+}
+
+function looksLikeTabularPlaintext(text: string) {
+  // Deteksi tabel yang dikirim model pakai TAB atau banyak spasi (bukan markdown table)
+  // Contoh: "Semester\tKode\tMata Kuliah\tSKS"
+  const lines = (text || "").split("\n").filter(Boolean);
+  if (lines.length < 2) return false;
+
+  const tabLines = lines.filter((l) => l.includes("\t")).length;
+  if (tabLines >= Math.min(3, lines.length)) return true;
+
+  // Heuristik spasi banyak: minimal 2 kolom dengan gap spasi >= 2, beberapa baris
+  const spaced = lines.filter((l) => /\S+\s{2,}\S+/.test(l)).length;
+  return spaced >= Math.min(3, lines.length);
 }
 
 // --- 1. Custom Animation Styles (Inject CSS) ---
@@ -42,15 +98,41 @@ const animationStyles = `
 
 export default function ChatBubble({ item }: { item: ChatItem }) {
   const isUser = item.role === "user";
-  const content = normalizeText(item.text);
+  const raw = normalizeText(item.text);
+
+  // Untuk AI: normalize markdown agar stabil lintas model
+  const content = isUser ? raw : normalizeMarkdown(raw);
+
+  // ✅ NEW: rapikan sources (unik per judul) tanpa mengubah tampilan utama
+  const sources = useMemo(() => {
+    const r = item.sources ?? [];
+    const seen = new Set<string>();
+    const uniq: ChatSource[] = [];
+    for (const s of r) {
+      const key = s?.source ?? "unknown";
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniq.push({
+        source: key,
+        snippet: (s?.snippet ?? "").trim(),
+      });
+    }
+    return uniq;
+  }, [item.sources]);
+
+  // ✅ NEW: toggle panel rujukan (default tertutup)
+  const [showSources, setShowSources] = useState(false);
+
+  // Fallback: kalau model kirim "tabel plaintext" (tab/spaces) -> tampilkan pre-block rapi
+  const showPlainTableFallback = !isUser && looksLikeTabularPlaintext(content) && !content.includes("|");
 
   return (
     <>
       <style>{animationStyles}</style>
-      
+
       <div
         className={cn(
-          "animate-entry flex w-full gap-2 md:gap-4 opacity-0", // opacity-0 awal agar transisi mulus
+          "animate-entry flex w-full min-w-0 gap-2 md:gap-4 opacity-0",
           "items-start",
           isUser ? "flex-row-reverse" : "flex-row"
         )}
@@ -75,7 +157,7 @@ export default function ChatBubble({ item }: { item: ChatItem }) {
         {/* --- CONTENT WRAPPER --- */}
         <div
           className={cn(
-            "flex flex-col",
+            "flex min-w-0 flex-col",
             "max-w-[90%] md:max-w-[75%] lg:max-w-[65%]",
             isUser ? "items-end" : "items-start"
           )}
@@ -98,7 +180,7 @@ export default function ChatBubble({ item }: { item: ChatItem }) {
           {/* --- BUBBLE BOX --- */}
           <div
             className={cn(
-              "relative overflow-hidden shadow-sm transition-all duration-300",
+              "relative max-w-full min-w-0 overflow-hidden shadow-sm transition-all duration-300",
               "px-4 py-3 md:px-6 md:py-4",
               isUser
                 ? "rounded-2xl rounded-tr-sm bg-zinc-900 text-zinc-50 hover:bg-black"
@@ -106,62 +188,109 @@ export default function ChatBubble({ item }: { item: ChatItem }) {
             )}
           >
             {isUser ? (
-              // USER TEXT
-              <div className="whitespace-pre-wrap text-[14px] font-normal leading-relaxed md:text-[15px]">
+              <div className="whitespace-pre-wrap break-words text-[14px] font-normal leading-relaxed md:text-[15px]">
                 {content}
               </div>
             ) : (
-              // AI MARKDOWN
-              <div className="prose prose-zinc max-w-none text-[14px] leading-relaxed md:text-[15px]">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    h1: ({ children }) => <h1 className="mb-3 mt-1 text-lg font-bold text-zinc-900">{children}</h1>,
-                    h2: ({ children }) => <h2 className="mb-2 mt-4 text-base font-bold text-zinc-900">{children}</h2>,
-                    h3: ({ children }) => <h3 className="mb-2 mt-3 text-sm font-bold text-zinc-900">{children}</h3>,
-                    p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                    ul: ({ children }) => <ul className="mb-3 list-disc space-y-1 pl-4 md:pl-5 marker:text-zinc-400">{children}</ul>,
-                    ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1 pl-4 md:pl-5 marker:text-zinc-400">{children}</ol>,
-                    li: ({ children }) => <li className="pl-1">{children}</li>,
-                    strong: ({ children }) => <strong className="font-semibold text-zinc-900">{children}</strong>,
-                    em: ({ children }) => <em className="italic text-zinc-600">{children}</em>,
-                    blockquote: ({ children }) => (
-                      <blockquote className="my-4 border-l-4 border-zinc-300 bg-zinc-50 px-4 py-2 italic text-zinc-600">
-                        {children}
-                      </blockquote>
-                    ),
-                    hr: () => <hr className="my-6 border-zinc-200" />,
-                    code: ({ inline, className, children }: any) => {
-                      if (inline) {
-                        return <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-[13px] font-medium text-pink-600 border border-zinc-200">{children}</code>;
-                      }
-                      return (
-                        <div className="group relative my-4 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-md">
-                          <div className="flex items-center justify-between bg-zinc-800/50 px-3 py-1.5 text-xs text-zinc-400">
-                            <span>Snippet</span>
+              <div className="prose prose-zinc max-w-none break-words text-[14px] leading-relaxed md:text-[15px]">
+                {showPlainTableFallback ? (
+                  // Fallback kalau model kasih tabel pakai TAB/spasi (bukan markdown table)
+                  <div className="my-2 overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
+                    <div className="overflow-x-auto bg-zinc-50">
+                      <pre className="m-0 p-4 text-[12px] leading-relaxed text-zinc-800 whitespace-pre">
+                        {content}
+                      </pre>
+                    </div>
+                  </div>
+                ) : (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeSanitize]}
+                    components={{
+                      h1: ({ children }) => (
+                        <h1 className="mb-3 mt-1 text-lg font-bold text-zinc-900">
+                          {children}
+                        </h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2 className="mb-2 mt-4 text-base font-bold text-zinc-900">
+                          {children}
+                        </h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3 className="mb-2 mt-3 text-sm font-bold text-zinc-900">
+                          {children}
+                        </h3>
+                      ),
+                      p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                      ul: ({ children }) => (
+                        <ul className="mb-3 list-disc space-y-1 pl-4 md:pl-5 marker:text-zinc-400">
+                          {children}
+                        </ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol className="mb-3 list-decimal space-y-1 pl-4 md:pl-5 marker:text-zinc-400">
+                          {children}
+                        </ol>
+                      ),
+                      li: ({ children }) => <li className="pl-1">{children}</li>,
+                      strong: ({ children }) => (
+                        <strong className="font-semibold text-zinc-900">{children}</strong>
+                      ),
+                      em: ({ children }) => <em className="italic text-zinc-600">{children}</em>,
+                      blockquote: ({ children }) => (
+                        <blockquote className="my-4 border-l-4 border-zinc-300 bg-zinc-50 px-4 py-2 italic text-zinc-600">
+                          {children}
+                        </blockquote>
+                      ),
+                      hr: () => <hr className="my-6 border-zinc-200" />,
+                      code: ({ inline, className, children }: any) => {
+                        const text = toPlainString(children);
+
+                        if (inline) {
+                          return (
+                            <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-[13px] font-medium text-pink-600 border border-zinc-200">
+                              {text}
+                            </code>
+                          );
+                        }
+
+                        return (
+                          <div className="group relative my-4 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-md">
+                            <div className="flex items-center justify-between bg-zinc-800/50 px-3 py-1.5 text-xs text-zinc-400">
+                              <span>Snippet</span>
+                            </div>
+                            <div className="overflow-x-auto p-4">
+                              <code className={cn("text-xs text-zinc-100 md:text-sm font-mono", className)}>
+                                {text}
+                              </code>
+                            </div>
                           </div>
-                          <div className="overflow-x-auto p-4">
-                            <code className={cn("text-xs text-zinc-100 md:text-sm font-mono", className)}>{children}</code>
+                        );
+                      },
+                      table: ({ children }) => (
+                        <div className="my-4 overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[300px] border-collapse text-left text-sm">
+                              {children}
+                            </table>
                           </div>
                         </div>
-                      );
-                    },
-                    table: ({ children }) => (
-                      <div className="my-4 overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[300px] border-collapse text-left text-sm">{children}</table>
-                        </div>
-                      </div>
-                    ),
-                    thead: ({ children }) => <thead className="bg-zinc-50 text-zinc-700">{children}</thead>,
-                    tbody: ({ children }) => <tbody className="divide-y divide-zinc-100 bg-white">{children}</tbody>,
-                    tr: ({ children }) => <tr className="hover:bg-zinc-50/50 transition-colors">{children}</tr>,
-                    th: ({ children }) => <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-zinc-500 border-b border-zinc-200">{children}</th>,
-                    td: ({ children }) => <td className="px-4 py-3 text-zinc-600 align-top">{children}</td>,
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
+                      ),
+                      thead: ({ children }) => <thead className="bg-zinc-50 text-zinc-700">{children}</thead>,
+                      tbody: ({ children }) => <tbody className="divide-y divide-zinc-100 bg-white">{children}</tbody>,
+                      tr: ({ children }) => <tr className="hover:bg-zinc-50/50 transition-colors">{children}</tr>,
+                      th: ({ children }) => (
+                        <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider text-zinc-500 border-b border-zinc-200">
+                          {children}
+                        </th>
+                      ),
+                      td: ({ children }) => <td className="px-4 py-3 text-zinc-600 align-top">{children}</td>,
+                    }}
+                  >
+                    {content}
+                  </ReactMarkdown>
+                )}
 
                 {/* Footer Actions */}
                 <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3">
@@ -169,16 +298,71 @@ export default function ChatBubble({ item }: { item: ChatItem }) {
                     <span className="material-symbols-outlined text-[14px]">verified_user</span>
                     Sumber Terverifikasi
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => navigator.clipboard.writeText(content)}
-                    className="group flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 active:scale-95"
-                    title="Salin jawaban"
-                  >
-                    <span className="material-symbols-outlined text-[14px] text-zinc-400 group-hover:text-zinc-800">content_copy</span>
-                    Salin
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    {sources.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowSources((v) => !v)}
+                        className="group flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 active:scale-95"
+                        title="Lihat rujukan"
+                      >
+                        <span className="material-symbols-outlined text-[14px] text-zinc-400 group-hover:text-zinc-800">
+                          {showSources ? "expand_less" : "expand_more"}
+                        </span>
+                        Rujukan
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText?.(content)}
+                      className="group flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 active:scale-95"
+                      title="Salin jawaban"
+                    >
+                      <span className="material-symbols-outlined text-[14px] text-zinc-400 group-hover:text-zinc-800">
+                        content_copy
+                      </span>
+                      Salin
+                    </button>
+                  </div>
                 </div>
+
+                {/* Panel rujukan */}
+                {sources.length > 0 && showSources && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+                    <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-3 py-2">
+                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-700">
+                        <span className="material-symbols-outlined text-[16px] text-zinc-500">
+                          library_books
+                        </span>
+                        Rujukan Dokumen
+                      </span>
+                      <span className="text-[10px] font-medium text-zinc-400">
+                        {sources.length} sumber
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-zinc-200">
+                      {sources.map((s, idx) => (
+                        <div key={`${s.source}-${idx}`} className="px-3 py-2">
+                          <div className="text-[12px] font-semibold text-zinc-800">
+                            {s.source}
+                          </div>
+                          {s.snippet ? (
+                            <div className="mt-1 text-[12px] leading-relaxed text-zinc-600">
+                              {s.snippet}
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-[12px] leading-relaxed text-zinc-500 italic">
+                              (Tidak ada cuplikan)
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -208,7 +392,7 @@ export function TypingBubble() {
           </span>
           <span className="text-[10px] text-zinc-400 md:text-[11px]">Sedang mengetik...</span>
         </div>
-        
+
         <div className="rounded-2xl rounded-tl-sm border border-zinc-200 bg-white px-4 py-3 shadow-sm md:px-6 md:py-4">
           <div className="flex items-center gap-1">
             <div className="dot-1 h-2 w-2 rounded-full bg-zinc-400" />

@@ -15,13 +15,12 @@ export default function ChatThread({ items }: { items: ChatItem[] }) {
   }, [items]);
 
   return (
-    // Container Layout: 
+    // Container Layout:
     // - w-full & mx-auto: Agar konten di tengah
     // - overflow-x-hidden: Mencegah tabel lebar merusak layout mobile
     // - px-4: Padding mobile
-    <div className="mx-auto w-full max-w-3xl overflow-x-hidden px-4 md:px-0">
+    <div className="mx-auto w-full max-w-3xl min-w-0 overflow-x-hidden px-4 md:px-0">
       <div className="flex flex-col gap-6 md:gap-8">
-        
         {/* Date Badge */}
         <div className="pointer-events-none sticky top-0 z-10 flex justify-center py-6">
           <span className="inline-flex items-center rounded-full border border-zinc-200/50 bg-white/60 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 backdrop-blur-xl shadow-sm">
@@ -33,6 +32,9 @@ export default function ChatThread({ items }: { items: ChatItem[] }) {
           </span>
         </div>
 
+        {/* ✅ Pembaruan kompatibilitas:
+            ChatItem sekarang boleh punya `sources?: [...]`.
+            ChatBubble sudah handle itu, jadi di sini tidak perlu ubah desain/markup. */}
         {items.map((it) => (
           <ChatBubble key={it.id} item={it} />
         ))}

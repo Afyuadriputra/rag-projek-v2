@@ -18,9 +18,15 @@ const apiClient = axios.create({
 // 2. TIPE DATA (INTERFACES)
 // ==========================================
 
+export interface ChatSource {
+  source: string;   // judul/nama dokumen
+  snippet: string;  // cuplikan konteks yang dipakai
+}
+
 // ✅ Chat API
 export interface ChatResponse {
   answer?: string; // backend sukses -> {answer}
+  sources?: ChatSource[];
   error?: string;  // backend error -> {error}
 }
 

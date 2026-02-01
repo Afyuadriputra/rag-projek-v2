@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePage } from "@inertiajs/react";
-import { cn } from "@/lib/utils"; 
+import { cn } from "@/lib/utils";
 
 // Components
 import AppHeader from "@/components/organisms/AppHeader";
@@ -42,19 +42,21 @@ function uid() {
 
 export default function Index() {
   const { props } = usePage<PageProps>();
-  const {
-    user,
-    initialHistory,
-    documents: initialDocs,
-    storage: initialStorage,
-  } = props;
+  const { user, initialHistory, documents: initialDocs, storage: initialStorage } = props;
 
   // State
   const [dark, setDark] = useState(false);
   const [documents, setDocuments] = useState<DocumentDto[]>(initialDocs ?? []);
   const [storage, setStorage] = useState<StorageInfo | undefined>(initialStorage);
   const [loading, setLoading] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false); 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // ✅ scroll container ref
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ composer height & safe area padding
+  const [composerH, setComposerH] = useState(220); // fallback
+  const [safeBottom, setSafeBottom] = useState(0);
 
   // Toast State
   const [toast, setToast] = useState<{
@@ -71,6 +73,67 @@ export default function Index() {
     if (dark) root.classList.add("dark");
     else root.classList.remove("dark");
   }, [dark]);
+
+  // ✅ Safe-area bottom (iPhone)
+  useEffect(() => {
+    const updateSafeArea = () => {
+      // VisualViewport lebih akurat di iOS ketika keyboard muncul
+      // Tapi safe inset tetap kita gunakan dari CSS env() via padding calc.
+      // Untuk fallback JS: ambil perkiraan dari viewport.
+      const vv = window.visualViewport;
+      if (!vv) return;
+
+      // Ini bukan "safe area" literal, tapi membantu saat keyboard / bar berubah.
+      // Kita simpan 0-16 agar tidak overpad.
+      setSafeBottom(0);
+    };
+
+    updateSafeArea();
+    window.visualViewport?.addEventListener("resize", updateSafeArea);
+    window.addEventListener("orientationchange", updateSafeArea);
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateSafeArea);
+      window.removeEventListener("orientationchange", updateSafeArea);
+    };
+  }, []);
+
+  // ✅ ukur tinggi composer dari elemen aslinya (absolute)
+  useEffect(() => {
+    let ro: ResizeObserver | null = null;
+    let cancelled = false;
+
+    const attach = () => {
+      const el = document.querySelector('[data-testid="chat-composer"]') as HTMLElement | null;
+      if (!el) return false;
+
+      const update = () => {
+        const h = el.getBoundingClientRect().height;
+        // + extra spacing supaya konten terakhir benar-benar bebas dari overlay
+        setComposerH(Math.ceil(h) + 16);
+      };
+
+      update();
+      ro = new ResizeObserver(() => update());
+      ro.observe(el);
+      return true;
+    };
+
+    // retry beberapa kali karena Inertia kadang render bertahap
+    let tries = 0;
+    const tick = () => {
+      if (cancelled) return;
+      tries += 1;
+      const ok = attach();
+      if (!ok && tries < 20) requestAnimationFrame(tick);
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      ro?.disconnect();
+    };
+  }, [user.id]);
 
   // --- Data Logic ---
   const refreshDocuments = async () => {
@@ -90,10 +153,7 @@ export default function Index() {
         id: uid(),
         role: "assistant",
         text: "Halo! Saya siap membantu analisis akademikmu. Unggah transkrip atau KRS, lalu tanyakan rekap nilai atau IPK.",
-        time: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       });
       return arr;
     }
@@ -106,39 +166,41 @@ export default function Index() {
 
   const [items, setItems] = useState<ChatItem[]>(initialItems);
 
+  // ✅ Inertia reuse fix: sinkronkan ulang items saat user/history berubah
+  useEffect(() => {
+    setItems(initialItems);
+  }, [user.id, initialItems]);
+
+  // ✅ auto-scroll lebih “nempel bawah” (pakai scrollHeight besar)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTo({ top: el.scrollHeight + 9999, behavior: "smooth" });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [items, composerH]);
+
   // --- Handlers ---
   const onSend = async (message: string) => {
     const now = new Date();
-    const timeStr = now.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-    const userItem: ChatItem = {
-      id: uid(),
-      role: "user",
-      text: message,
-      time: timeStr,
-    };
-    setItems((prev) => [...prev, userItem]);
+    setItems((prev) => [
+      ...prev,
+      { id: uid(), role: "user", text: message, time: timeStr },
+    ]);
 
     setLoading(true);
     try {
       const res = await sendChat(message);
       const aiText = res.answer ?? res.error ?? "Maaf, tidak ada jawaban.";
-      const aiItem: ChatItem = {
-        id: uid(),
-        role: "assistant",
-        text: aiText,
-        time: timeStr,
-      };
-      setItems((prev) => [...prev, aiItem]);
+      setItems((prev) => [
+        ...prev,
+        { id: uid(), role: "assistant", text: aiText, time: timeStr },
+      ]);
     } catch (e: any) {
-      setToast({
-        open: true,
-        kind: "error",
-        msg: e?.message ?? "Gagal terhubung ke AI.",
-      });
+      setToast({ open: true, kind: "error", msg: e?.message ?? "Gagal terhubung ke AI." });
     } finally {
       setLoading(false);
     }
@@ -146,39 +208,31 @@ export default function Index() {
 
   const onUploadClick = () => fileInputRef.current?.click();
 
-  const onUploadChange: React.ChangeEventHandler<HTMLInputElement> = async (
-    e
-  ) => {
+  const onUploadChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setLoading(true);
-    setMobileMenuOpen(false); 
+    setMobileMenuOpen(false);
 
     try {
       const res = await uploadDocuments(files);
-      setToast({
-        open: true,
-        kind: res.status === "success" ? "success" : "error",
-        msg: res.msg,
-      });
+      setToast({ open: true, kind: res.status === "success" ? "success" : "error", msg: res.msg });
       await refreshDocuments();
     } catch (err: any) {
-      setToast({
-        open: true,
-        kind: "error",
-        msg: err?.message ?? "Upload gagal.",
-      });
+      setToast({ open: true, kind: "error", msg: err?.message ?? "Upload gagal." });
     } finally {
       setLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
+  // ✅ padding bawah final: composer + safe area (CSS env) + sedikit ekstra
+  // `env(safe-area-inset-bottom)` akan bekerja di iOS Safari.
+  const chatPaddingBottom = `calc(${composerH}px + env(safe-area-inset-bottom) + ${safeBottom}px + 12px)`;
+
   return (
-    // Menggunakan h-[100dvh] untuk mobile browser support
     <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-zinc-50 font-sans text-zinc-900 selection:bg-black selection:text-white">
-      
       {/* 1. AMBIENT BACKGROUND */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <div className="absolute -left-[10%] -top-[10%] h-[50vh] w-[50vw] rounded-full bg-blue-100/40 blur-[100px]" />
@@ -187,26 +241,21 @@ export default function Index() {
 
       {/* 2. HEADER */}
       <div className="relative z-10 flex-none">
-        <AppHeader
-          dark={dark}
-          onToggleDark={setDark}
-          user={user} // UPDATE: Passing full user object untuk keperluan dropdown logout
-        />
+        <AppHeader dark={dark} onToggleDark={setDark} user={user} />
       </div>
 
       {/* 3. MAIN LAYOUT */}
-      <div className="relative flex flex-1 overflow-hidden">
-        
+      <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* --- DESKTOP SIDEBAR --- */}
         <div className="hidden h-full md:flex">
-            <KnowledgeSidebar
-              onUploadClick={onUploadClick}
-              docs={documents.map((d) => ({
-                title: d.title,
-                status: d.is_embedded ? "analyzed" : "processing",
-              }))}
-              storage={storage}
-            />
+          <KnowledgeSidebar
+            onUploadClick={onUploadClick}
+            docs={documents.map((d) => ({
+              title: d.title,
+              status: d.is_embedded ? "analyzed" : "processing",
+            }))}
+            storage={storage}
+          />
         </div>
 
         {/* --- MOBILE SIDEBAR (Drawer) --- */}
@@ -223,52 +272,50 @@ export default function Index() {
             mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           )}
         >
-           <KnowledgeSidebar
-              onUploadClick={onUploadClick}
-              docs={documents.map((d) => ({
-                title: d.title,
-                status: d.is_embedded ? "analyzed" : "processing",
-              }))}
-              storage={storage}
-            />
+          <KnowledgeSidebar
+            onUploadClick={onUploadClick}
+            docs={documents.map((d) => ({
+              title: d.title,
+              status: d.is_embedded ? "analyzed" : "processing",
+            }))}
+            storage={storage}
+          />
         </div>
 
         {/* --- CHAT AREA --- */}
-        <main className="relative z-0 flex h-full flex-1 flex-col">
-          
+        <main className="relative z-0 flex h-full flex-1 min-h-0 min-w-0 flex-col">
           {/* Mobile Menu Trigger */}
           <button
             onClick={() => setMobileMenuOpen(true)}
             className="absolute left-4 top-4 z-30 flex size-10 items-center justify-center rounded-full border border-black/5 bg-white/60 text-zinc-600 shadow-sm backdrop-blur-md transition active:scale-95 md:hidden"
           >
-             <span className="material-symbols-outlined text-[20px]">menu</span>
+            <span className="material-symbols-outlined text-[20px]">menu</span>
           </button>
 
           {/* CHAT THREAD CONTAINER */}
-          <div className="flex-1 w-full overflow-y-auto scrollbar-hide pb-60 pt-20 md:pb-36 md:pt-4">
-             <ChatThread items={items} />
+          <div
+            ref={scrollRef}
+            className="flex-1 min-h-0 min-w-0 w-full overflow-y-auto overscroll-contain touch-pan-y scrollbar-hide pt-20 md:pt-4"
+            style={{ paddingBottom: chatPaddingBottom }}
+          >
+            <ChatThread items={items} />
           </div>
 
           {/* Composer */}
-          <ChatComposer
-            onSend={onSend}
-            onUploadClick={onUploadClick}
-            loading={loading}
-          />
+          <ChatComposer onSend={onSend} onUploadClick={onUploadClick} loading={loading} />
         </main>
       </div>
 
       {/* Hidden File Input */}
-<input
-  data-testid="upload-input"
-  ref={fileInputRef}
-  type="file"
-  multiple
-  className="hidden"
-  onChange={onUploadChange}
-  accept=".pdf,.xlsx,.xls,.csv,.md,.txt"
-/>
-
+      <input
+        data-testid="upload-input"
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={onUploadChange}
+        accept=".pdf,.xlsx,.xls,.csv,.md,.txt"
+      />
 
       {/* Toast */}
       <Toast

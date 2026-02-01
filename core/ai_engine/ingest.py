@@ -1,11 +1,12 @@
 ﻿import pdfplumber
 import pandas as pd
-import logging # 1. Import Logging
+import logging  # 1. Import Logging
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .config import get_vectorstore
 
 # 2. Inisialisasi Logger
 logger = logging.getLogger(__name__)
+
 
 def process_document(doc_instance):
     """
@@ -15,6 +16,9 @@ def process_document(doc_instance):
     file_path = doc_instance.file.path
     ext = file_path.split('.')[-1].lower()
     text_content = ""
+
+    # ✅ NEW: simpan kolom (schema) untuk CSV/Excel agar retrieval bisa "anti-halu"
+    detected_columns = None  # type: ignore
 
     logger.info(f"📄 MULAI PARSING: {doc_instance.title} (Type: {ext})")
 
@@ -29,17 +33,20 @@ def process_document(doc_instance):
                         for row in table:
                             clean_row = [str(item) if item else "" for item in row]
                             text_content += " | ".join(clean_row) + "\n"
-                    
+
                     # Ekstrak Teks Biasa
                     text = page.extract_text()
-                    if text: text_content += text + "\n"
-            
+                    if text:
+                        text_content += text + "\n"
+
             logger.debug(f"✅ PDF Parsed: {len(pdf.pages)} halaman.")
-        
+
         elif ext in ['xlsx', 'xls']:
             try:
                 df = pd.read_excel(file_path)
-                df = df.fillna('') 
+                df = df.fillna('')
+                # ✅ NEW: simpan nama kolom (schema)
+                detected_columns = [str(c).strip() for c in list(df.columns)]
                 text_content = df.to_markdown(index=False)
                 logger.debug(f"✅ Excel Parsed: {len(df)} baris data.")
             except Exception as e:
@@ -64,11 +71,13 @@ def process_document(doc_instance):
                     except Exception as e_final:
                         logger.error(f"❌ CSV GAGAL TOTAL: {doc_instance.title}. Error: {e_final}", exc_info=True)
                         return False
-            
+
             df = df.fillna('')
+            # ✅ NEW: simpan nama kolom (schema)
+            detected_columns = [str(c).strip() for c in list(df.columns)]
             text_content = df.to_markdown(index=False)
             logger.debug(f"✅ CSV Parsed: {len(df)} baris data.")
-            
+
         elif ext in ['md', 'txt']:
             with open(file_path, 'r', encoding='utf-8') as f:
                 text_content = f.read()
@@ -96,13 +105,22 @@ def process_document(doc_instance):
 
         # 3. EMBEDDING & STORAGE
         vectorstore = get_vectorstore()
-        
+
         # Metadata User ID (Kunci Keamanan Data!)
-        metadatas = [{"user_id": str(doc_instance.user.id), "source": doc_instance.title} for _ in chunks]
-        
+        # ✅ NEW: tambahkan file_type + columns (kalau ada) untuk bantu retrieval menyesuaikan schema & anti-halu
+        base_meta = {
+            "user_id": str(doc_instance.user.id),
+            "source": doc_instance.title,
+            "file_type": ext,
+        }
+        if detected_columns:
+            base_meta["columns"] = detected_columns
+
+        metadatas = [base_meta for _ in chunks]
+
         logger.debug(f"💾 Menyimpan ke ChromaDB...")
         vectorstore.add_texts(texts=chunks, metadatas=metadatas)
-        
+
         logger.info(f"✅ INGEST SELESAI: {doc_instance.title} berhasil masuk Knowledge Base.")
         return True
 
