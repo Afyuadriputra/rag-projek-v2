@@ -163,20 +163,22 @@ LOGGING = {
             # - location: filename:lineno funcName (tetap jelas)
             #
             # Catatan: %(name)-28s akan left-align dan auto truncate di terminal.
-            # Layout umum: ringkas dan jelas untuk layar kecil
+            # Layout umum: padat, cocok untuk terminal kecil (pakai '|')
             "format": (
-                "%(log_color)s%(levelname)-7s%(reset)s "
-                "%(white)s%(asctime)s%(reset)s "
-                "%(cyan)s%(name)-22s%(reset)s "
-                "%(white)srid=%(request_id)-10s%(reset)s "
-                "%(blue)s%(method)-6s%(reset)s "
-                "%(white)s%(path)-22s%(reset)s "
-                "%(status_color)s%(status)-3s%(reset)s "
-                "%(yellow)s%(duration_ms)4sms%(reset)s "
-                "%(white)suser=%(user)-10s ip=%(ip)-15s%(reset)s | "
-                "%(message)s "
-                "%(white)sua=%(agent)s%(reset)s "
-                "%(white)src=%(referer)s%(reset)s"
+                "%(log_color)s%(levelname)-7s%(reset)s|"
+                "%(white)s%(asctime)s%(reset)s|"
+                "%(cyan)s%(name)-20s%(reset)s|"
+                "%(white)srid=%(request_id)-10s%(reset)s|"
+                "%(blue)s%(method)-6s%(reset)s|"
+                "%(white)s%(path)-20s%(reset)s|"
+                "%(status_color)s%(status)-3s%(reset)s|"
+                "%(yellow)s%(duration_ms)4sms%(reset)s|"
+                "%(white)suser=%(user)-10s%(reset)s|"
+                "%(white)sip=%(ip)-15s%(reset)s|"
+                "%(white)sua=%(agent)s%(reset)s|"
+                "%(white)src=%(referer)s%(reset)s|"
+                "%(purple)s%(filename)s:%(lineno)d%(reset)s|"
+                "%(message)s"
             ),
             "datefmt": "%H:%M:%S",
 
@@ -191,17 +193,18 @@ LOGGING = {
         },
         "request_compact": {
             "()": "colorlog.ColoredFormatter",
-            # Layout khusus akses log: singkat, fokus ke aktivitas request
+            # Layout akses log: sangat padat, pakai '|'
             "format": (
-                "%(log_color)s%(levelname)-7s%(reset)s "
-                "%(white)s%(asctime)s%(reset)s "
-                "%(blue)s%(method)-6s%(reset)s "
-                "%(white)s%(path)-22s%(reset)s "
-                "%(status_color)s%(status)-3s%(reset)s "
-                "%(yellow)s%(duration_ms)4sms%(reset)s "
-                "%(white)suser=%(user)-10s ip=%(ip)-15s%(reset)s "
-                "%(white)srid=%(request_id)-10s%(reset)s "
-                "%(white)sua=%(agent)s%(reset)s "
+                "%(log_color)s%(levelname)-7s%(reset)s|"
+                "%(white)s%(asctime)s%(reset)s|"
+                "%(blue)s%(method)-6s%(reset)s|"
+                "%(white)s%(path)-20s%(reset)s|"
+                "%(status_color)s%(status)-3s%(reset)s|"
+                "%(yellow)s%(duration_ms)4sms%(reset)s|"
+                "%(white)suser=%(user)-10s%(reset)s|"
+                "%(white)sip=%(ip)-15s%(reset)s|"
+                "%(white)srid=%(request_id)-10s%(reset)s|"
+                "%(white)sua=%(agent)s%(reset)s|"
                 "%(white)src=%(referer)s%(reset)s"
             ),
             "datefmt": "%H:%M:%S",
