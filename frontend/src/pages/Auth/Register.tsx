@@ -2,7 +2,13 @@ import React, { useState } from "react";
 import { router, Link } from "@inertiajs/react";
 import { cn } from "@/lib/utils";
 
-export default function Register({ errors }: { errors?: Record<string, string> }) {
+export default function Register({
+  errors,
+  registration_enabled = true,
+}: {
+  errors?: Record<string, string>;
+  registration_enabled?: boolean;
+}) {
   const [values, setValues] = useState({
     username: "",
     email: "",
@@ -47,6 +53,7 @@ export default function Register({ errors }: { errors?: Record<string, string> }
           </div>
 
           {/* Form */}
+          {registration_enabled ? (
           <form onSubmit={handleSubmit} className="space-y-4">
              {/* General Error */}
              {errors?.auth && (
@@ -157,6 +164,14 @@ export default function Register({ errors }: { errors?: Record<string, string> }
               )}
             </button>
           </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs font-medium text-amber-700 backdrop-blur-sm">
+                <span className="material-symbols-outlined text-[16px]">block</span>
+                Pendaftaran akun baru saat ini dinonaktifkan oleh admin.
+              </div>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="mt-6 text-center text-xs text-zinc-500 font-medium">

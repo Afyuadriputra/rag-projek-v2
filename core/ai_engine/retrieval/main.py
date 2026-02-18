@@ -1,4 +1,3 @@
-import os
 import time
 import logging
 from typing import Dict, Any
@@ -9,16 +8,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from ..config import get_vectorstore
 from .rules import _SEMESTER_RE, infer_doc_type
 from .utils import build_sources_from_docs, looks_like_markdown_table, has_interactive_sections
-from .llm import BACKUP_MODELS, build_llm, invoke_text, llm_fallback_message
+from .llm import get_runtime_openrouter_config, get_backup_models, build_llm, invoke_text, llm_fallback_message
 from .prompt import LLM_FIRST_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
 
 def ask_bot(user_id, query, request_id: str = "-") -> Dict[str, Any]:
-    if not os.environ.get("OPENROUTER_API_KEY"):
+    runtime_cfg = get_runtime_openrouter_config()
+    api_key = (runtime_cfg.get("api_key") or "").strip()
+    if not api_key:
         return {
-            "answer": "OPENROUTER_API_KEY belum di-set. Cek file .env / environment variables.",
+            "answer": "OpenRouter API key belum di-set. Atur di Django Admin (LLM Configuration) atau .env.",
             "sources": [],
         }
 
@@ -66,8 +67,12 @@ def ask_bot(user_id, query, request_id: str = "-") -> Dict[str, Any]:
     template = LLM_FIRST_TEMPLATE
     PROMPT = ChatPromptTemplate.from_template(template)
 
+    backup_models = get_backup_models(
+        str(runtime_cfg.get("model") or ""),
+        runtime_cfg.get("backup_models"),
+    )
     last_error = ""
-    for idx, model_name in enumerate(BACKUP_MODELS):
+    for idx, model_name in enumerate(backup_models):
         model_t0 = time.time()
         try:
             logger.info(
@@ -76,7 +81,7 @@ def ask_bot(user_id, query, request_id: str = "-") -> Dict[str, Any]:
                 extra={"request_id": request_id},
             )
 
-            llm = build_llm(model_name)
+            llm = build_llm(model_name, runtime_cfg)
             qa_chain = create_stuff_documents_chain(llm, PROMPT)
             result = qa_chain.invoke({"input": q, "context": docs})
 
@@ -138,7 +143,7 @@ JAWABAN:
                 extra={"request_id": request_id},
             )
 
-            if idx < len(BACKUP_MODELS) - 1:
+            if idx < len(backup_models) - 1:
                 time.sleep(0.8)
                 continue
 

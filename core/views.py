@@ -15,7 +15,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError
 
 from . import service  #  business logic dipindah ke core/service.py
-from .models import UserQuota
+from .models import UserQuota, SystemSetting
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("audit")
@@ -47,6 +47,16 @@ def _get_client_ip(request):
     return request.META.get("REMOTE_ADDR")
 
 
+def _is_registration_enabled() -> bool:
+    try:
+        cfg = SystemSetting.objects.first()
+        if cfg is None:
+            return True
+        return bool(cfg.registration_enabled)
+    except Exception:
+        return True
+
+
 # =========================
 # AUTH VIEWS
 # =========================
@@ -54,6 +64,24 @@ def register_view(request):
     if request.user.is_authenticated:
         logger.info(" [AUTH] already logged in -> redirect home", extra=_log_extra(request))
         return redirect("home")
+
+    registration_enabled = _is_registration_enabled()
+    if not registration_enabled:
+        ip = _get_client_ip(request)
+        logger.warning(f" [REGISTER DISABLED] blocked ip={ip}", extra=_log_extra(request))
+        audit_logger.warning(
+            "action=register status=blocked reason=registration_disabled",
+            extra=_audit_extra(request),
+        )
+        return inertia_render(
+            request,
+            "Auth/Register",
+            props={
+                "registration_enabled": False,
+                "errors": {"auth": "Pendaftaran saat ini dinonaktifkan oleh admin."},
+            },
+            status=403,
+        )
 
     if request.method == "POST":
         ip = _get_client_ip(request)
@@ -76,7 +104,11 @@ def register_view(request):
 
             if errors:
                 logger.warning(f" [REGISTER FAIL] ip={ip} errors={errors}", extra=_log_extra(request))
-                return inertia_render(request, "Auth/Register", props={"errors": errors})
+                return inertia_render(
+                    request,
+                    "Auth/Register",
+                    props={"errors": errors, "registration_enabled": True},
+                )
 
             user = User.objects.create_user(username=username, email=email, password=password)
             # default quota otomatis (10MB)
@@ -100,22 +132,32 @@ def register_view(request):
                 "action=register status=fail reason=duplicate_username",
                 extra=_audit_extra(request, user=username),
             )
-            return inertia_render(request, "Auth/Register", props={"errors": {"username": "Username sudah digunakan."}})
+            return inertia_render(
+                request,
+                "Auth/Register",
+                props={"errors": {"username": "Username sudah digunakan."}, "registration_enabled": True},
+            )
         except Exception as e:
             logger.error(f" [REGISTER ERROR] ip={ip} err={repr(e)}", extra=_log_extra(request), exc_info=True)
             audit_logger.error(
                 f"action=register status=error err={repr(e)}",
                 extra=_audit_extra(request, user=username),
             )
-            return inertia_render(request, "Auth/Register", props={"errors": {"auth": "Terjadi kesalahan server."}})
+            return inertia_render(
+                request,
+                "Auth/Register",
+                props={"errors": {"auth": "Terjadi kesalahan server."}, "registration_enabled": True},
+            )
 
-    return inertia_render(request, "Auth/Register")
+    return inertia_render(request, "Auth/Register", props={"registration_enabled": True})
 
 
 def login_view(request):
     if request.user.is_authenticated:
         logger.info(" [AUTH] already logged in -> redirect home", extra=_log_extra(request))
         return redirect("home")
+
+    registration_enabled = _is_registration_enabled()
 
     if request.method == "POST":
         ip = _get_client_ip(request)
@@ -136,7 +178,10 @@ def login_view(request):
                     return inertia_render(
                         request,
                         "Auth/Login",
-                        props={"errors": {"auth": "Terlalu banyak percobaan. Coba lagi nanti."}},
+                        props={
+                            "errors": {"auth": "Terlalu banyak percobaan. Coba lagi nanti."},
+                            "registration_enabled": registration_enabled,
+                        },
                         status=403,
                     )
             except Exception:
@@ -157,16 +202,30 @@ def login_view(request):
                 "action=login status=fail reason=invalid_credentials",
                 extra=_audit_extra(request, user=username),
             )
-            return inertia_render(request, "Auth/Login", props={"errors": {"auth": "Username atau password salah."}})
+            return inertia_render(
+                request,
+                "Auth/Login",
+                props={
+                    "errors": {"auth": "Username atau password salah."},
+                    "registration_enabled": registration_enabled,
+                },
+            )
         except Exception as e:
             logger.error(f" [LOGIN ERROR] ip={ip} err={repr(e)}", extra=_log_extra(request), exc_info=True)
             audit_logger.error(
                 f"action=login status=error err={repr(e)}",
                 extra=_audit_extra(request, user=username),
             )
-            return inertia_render(request, "Auth/Login", props={"errors": {"auth": "Error sistem."}})
+            return inertia_render(
+                request,
+                "Auth/Login",
+                props={
+                    "errors": {"auth": "Error sistem."},
+                    "registration_enabled": registration_enabled,
+                },
+            )
 
-    return inertia_render(request, "Auth/Login")
+    return inertia_render(request, "Auth/Login", props={"registration_enabled": registration_enabled})
 
 
 def logout_view(request):

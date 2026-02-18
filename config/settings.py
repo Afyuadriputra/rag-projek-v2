@@ -78,7 +78,8 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        # Prioritaskan template override level proyek (termasuk admin/*).
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -239,6 +240,15 @@ LOGGING = {
             "format": "%(asctime)s|%(levelname)s|rid=%(request_id)s|user=%(user)s|ip=%(ip)s|%(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
+        "app_plain": {
+            # Format rinci seperti access log terminal:
+            # INFO|17:33:02|GET|/path|200|3ms|user=...|ip=...|rid=...|ua=...|rc=...
+            "format": (
+                "%(levelname)s|%(asctime)s|%(method)s|%(path)s|%(status)s|%(duration_ms)sms|"
+                "user=%(user)s|ip=%(ip)s|rid=%(request_id)s|ua=%(agent)s|rc=%(referer)s|%(message)s"
+            ),
+            "datefmt": "%H:%M:%S",
+        },
     },
 
     "handlers": {
@@ -266,18 +276,29 @@ LOGGING = {
             "filters": ["request_id"],
             "level": "INFO",
         },
+        "app_file": {
+            "class": "concurrent_log_handler.ConcurrentTimedRotatingFileHandler",
+            "filename": str(LOG_DIR / "app.log"),
+            "when": "midnight",
+            "backupCount": 14,
+            "encoding": "utf-8",
+            "delay": True,
+            "formatter": "app_plain",
+            "filters": ["request_id"],
+            "level": "INFO",
+        },
     },
 
     "loggers": {
         # Root logger: semua log default masuk sini
         "": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "INFO",
         },
 
         # Access log 1 baris per request (dari middleware kamu)
         "request": {
-            "handlers": ["console_request"],
+            "handlers": ["console_request", "app_file"],
             "level": "INFO",
             "propagate": False,
         },
@@ -285,52 +306,52 @@ LOGGING = {
         # Hindari log dobel akses dari Django server
         # (kamu sudah punya access log dari "request")
         "django.server": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "WARNING",
             "propagate": False,
         },
 
         # Error request Django (500)
         "django.request": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "ERROR",
             "propagate": False,
         },
 
         # Inertia cukup WARNING
         "inertia": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "WARNING",
             "propagate": False,
         },
 
         # AI engine: INFO (kalau mau super detail: ganti jadi DEBUG)
         "core.ai_engine": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "INFO",
             "propagate": False,
         },
 
         # Audit log untuk aksi penting (disimpan di file + tampil di terminal)
         "audit": {
-            "handlers": ["console", "audit_file"],
+            "handlers": ["console", "audit_file", "app_file"],
             "level": "INFO",
             "propagate": False,
         },
 
         # (Opsional) Supaya log httpx/chroma tidak terlalu “berisik”
         "httpx": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "WARNING",
             "propagate": False,
         },
         "chromadb": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "WARNING",
             "propagate": False,
         },
         "chromadb.telemetry": {
-            "handlers": ["console"],
+            "handlers": ["console", "app_file"],
             "level": "WARNING",
             "propagate": False,
         },

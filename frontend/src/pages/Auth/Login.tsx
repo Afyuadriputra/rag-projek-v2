@@ -2,7 +2,13 @@ import React, { useState } from "react";
 import { router, Link } from "@inertiajs/react";
 import { cn } from "@/lib/utils";
 
-export default function Login({ errors }: { errors?: Record<string, string> }) {
+export default function Login({
+  errors,
+  registration_enabled = true,
+}: {
+  errors?: Record<string, string>;
+  registration_enabled?: boolean;
+}) {
   const [values, setValues] = useState({
     username: "",
     password: "",
@@ -130,13 +136,19 @@ export default function Login({ errors }: { errors?: Record<string, string> }) {
 
           {/* Footer */}
           <div className="mt-8 text-center text-xs text-zinc-500 font-medium">
-            Belum punya akun?{" "}
-            <Link
-              href="/register/"
-              className="font-bold text-black underline decoration-zinc-300 underline-offset-4 transition hover:text-zinc-600"
-            >
-              Daftar Sekarang
-            </Link>
+            {registration_enabled ? (
+              <>
+                Belum punya akun?{" "}
+                <Link
+                  href="/register/"
+                  className="font-bold text-black underline decoration-zinc-300 underline-offset-4 transition hover:text-zinc-600"
+                >
+                  Daftar Sekarang
+                </Link>
+              </>
+            ) : (
+              <span className="text-zinc-500">Pendaftaran akun baru sedang dinonaktifkan admin.</span>
+            )}
           </div>
         </div>
       </div>
