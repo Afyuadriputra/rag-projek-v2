@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings, RequestFactory
 
-from core.models import AcademicDocument, ChatSession, ChatHistory, UserQuota, SystemSetting
+from core.models import AcademicDocument, ChatSession, ChatHistory, UserQuota, SystemSetting, UserLoginPresence
 from core.ai_engine.ingest import process_document
 from core import views
 from core.ai_engine.retrieval.main import ask_bot
@@ -447,6 +447,109 @@ class SecurityAndApiTests(TestCase):
         resp = views.upload_api(req)
         self.assertEqual(resp.status_code, 413)
 
+    def test_registration_limit_blocks_new_non_staff_user(self):
+        self._announce("Registration limit blocks when non-staff quota is full")
+        User.objects.create_user(username="u2", password="pass123")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "registration_limit_enabled": True,
+                "max_registered_users": 2,
+                "registration_limit_message": "Kuota pendaftaran penuh",
+            },
+        )
+        payload = {
+            "username": "newbie2",
+            "email": "newbie2@example.com",
+            "password": "pass123",
+            "password_confirmation": "pass123",
+        }
+        resp = self.client.post("/register/", data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(User.objects.filter(username="newbie2").exists())
+
+    def test_concurrent_limit_blocks_new_non_staff_login(self):
+        self._announce("Concurrent limit blocks new non-staff login")
+        self.client.force_login(self.user_b)
+        UserLoginPresence.objects.update_or_create(
+            session_key=self.client.session.session_key,
+            defaults={"user": self.user_b, "is_active": True, "logged_out_at": None},
+        )
+        resp_logout = self.client.get("/logout/")
+        self.assertEqual(resp_logout.status_code, 302)
+        self.assertFalse(UserLoginPresence.objects.filter(user=self.user_b, is_active=True).exists())
+
+        # active online user lain memenuhi slot limit=1
+        UserLoginPresence.objects.create(user=self.user_b, session_key="active-bob", is_active=True)
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "concurrent_login_limit_enabled": True,
+                "max_concurrent_logins": 1,
+                "staff_bypass_concurrent_limit": True,
+            },
+        )
+        resp = self.client.post(
+            "/login/",
+            data=json.dumps({"username": "alice", "password": "pass123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertIsNone(self.client.session.get("_auth_user_id"))
+
+    def test_concurrent_limit_staff_bypass_on_login(self):
+        self._announce("Staff bypass concurrent limit remains allowed")
+        staff = User.objects.create_user(username="staff_limit", password="pass123", is_staff=True)
+        UserLoginPresence.objects.create(user=self.user_b, session_key="active-bob-2", is_active=True)
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "concurrent_login_limit_enabled": True,
+                "max_concurrent_logins": 1,
+                "staff_bypass_concurrent_limit": True,
+            },
+        )
+        resp = self.client.post(
+            "/login/",
+            data=json.dumps({"username": "staff_limit", "password": "pass123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"], "/")
+        self.assertTrue(UserLoginPresence.objects.filter(user=staff, is_active=True).exists())
+
+    def test_presence_lifecycle_login_logout(self):
+        self._announce("Presence lifecycle login->logout updates active flag")
+        resp_login = self.client.post(
+            "/login/",
+            data=json.dumps({"username": "alice", "password": "pass123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp_login.status_code, 302)
+        session_key = self.client.session.session_key
+        self.assertTrue(UserLoginPresence.objects.filter(session_key=session_key, is_active=True).exists())
+
+        resp_logout = self.client.get("/logout/")
+        self.assertEqual(resp_logout.status_code, 302)
+        self.assertTrue(UserLoginPresence.objects.filter(session_key=session_key, is_active=False).exists())
+
+    def test_admin_realtime_users_endpoint_contract(self):
+        self._announce("Admin realtime-users endpoint returns summary and lists")
+        staff = User.objects.create_user(username="staff_admin", password="pass123", is_staff=True)
+        UserLoginPresence.objects.create(user=self.user_a, session_key="online-alice", is_active=True)
+        self.client.force_login(staff)
+        resp = self.client.get("/admin/realtime-users/")
+        self.assertEqual(resp.status_code, 200)
+        body = json.loads(resp.content.decode())
+        self.assertIn("summary", body)
+        self.assertIn("online_users", body)
+        self.assertIn("recent_registered_users", body)
+        self.assertIn("active_online_non_staff_count", body["summary"])
+        self.assertGreaterEqual(body["summary"]["active_online_non_staff_count"], 1)
+
     def test_maintenance_login_blocked(self):
         self._announce("Maintenance blocks login page and post")
         SystemSetting.objects.update_or_create(
@@ -502,9 +605,14 @@ class SecurityAndApiTests(TestCase):
             },
         )
         self.client.force_login(self.user_a)
+        UserLoginPresence.objects.update_or_create(
+            session_key=self.client.session.session_key,
+            defaults={"user": self.user_a, "is_active": True, "logged_out_at": None},
+        )
         resp = self.client.get("/api/documents/")
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(self.client.session.get("_auth_user_id"), None)
+        self.assertFalse(UserLoginPresence.objects.filter(user=self.user_a, is_active=True).exists())
 
     def test_maintenance_forced_redirect_has_query_flag(self):
         self._announce("Forced logout redirect includes maintenance and forced flags")

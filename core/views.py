@@ -16,7 +16,19 @@ from django.db import IntegrityError
 
 from . import service  #  business logic dipindah ke core/service.py
 from .models import UserQuota, ChatSession
-from .system_settings import get_maintenance_state, get_registration_enabled
+from .presence import (
+    cleanup_stale_presence,
+    count_active_online_non_staff_users,
+    is_user_online_non_staff,
+    mark_presence_inactive,
+    mark_presence_login,
+)
+from .system_settings import (
+    get_concurrent_limit_state,
+    get_maintenance_state,
+    get_registration_enabled,
+    get_registration_limit_state,
+)
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("audit")
@@ -79,6 +91,10 @@ def _is_registration_enabled() -> bool:
     return get_registration_enabled()
 
 
+def _non_staff_registered_count() -> int:
+    return User.objects.filter(is_staff=False, is_superuser=False).count()
+
+
 def _maintenance_props(forced_logout: bool = False) -> dict:
     state = get_maintenance_state()
     return {
@@ -127,12 +143,42 @@ def register_view(request):
             "action=register status=blocked reason=registration_disabled",
             extra=_audit_extra(request),
         )
-        return inertia_render(
+        return _inertia_render_with_status(
             request,
             "Auth/Register",
             props={
                 "registration_enabled": False,
                 "errors": {"auth": "Pendaftaran saat ini dinonaktifkan oleh admin."},
+                **_maintenance_props(forced_logout=False),
+            },
+            status=403,
+        )
+
+    registration_limit_state = get_registration_limit_state()
+    registered_non_staff_count = _non_staff_registered_count()
+    if (
+        registration_limit_state.enabled
+        and registered_non_staff_count >= registration_limit_state.max_registered_users
+    ):
+        ip = _get_client_ip(request)
+        logger.warning(
+            " [REGISTER BLOCKED LIMIT] ip=%s count=%s limit=%s",
+            ip,
+            registered_non_staff_count,
+            registration_limit_state.max_registered_users,
+            extra=_log_extra(request),
+        )
+        audit_logger.warning(
+            "action=register status=blocked reason=registration_limit code=REGISTRATION_LIMIT_REACHED "
+            f"count={registered_non_staff_count} limit={registration_limit_state.max_registered_users}",
+            extra=_audit_extra(request),
+        )
+        return _inertia_render_with_status(
+            request,
+            "Auth/Register",
+            props={
+                "registration_enabled": False,
+                "errors": {"auth": registration_limit_state.message},
                 **_maintenance_props(forced_logout=False),
             },
             status=403,
@@ -177,6 +223,16 @@ def register_view(request):
                 pass
             # perlu backend eksplisit karena ada multiple auth backends (axes)
             login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+            session_key = request.session.session_key
+            if not session_key:
+                request.session.save()
+                session_key = request.session.session_key
+            mark_presence_login(
+                user=user,
+                session_key=session_key or "",
+                ip_address=ip,
+                user_agent=request.META.get("HTTP_USER_AGENT", "") or "",
+            )
 
             logger.info(f" [REGISTER SUCCESS] user={user.username} id={user.id} ip={ip}", extra=_log_extra(request))
             audit_logger.info(
@@ -262,7 +318,7 @@ def login_view(request):
                         "action=login status=locked",
                         extra=_audit_extra(request, user=username),
                     )
-                    return inertia_render(
+                    return _inertia_render_with_status(
                         request,
                         "Auth/Login",
                         props={
@@ -277,7 +333,51 @@ def login_view(request):
 
             user = authenticate(request, username=username, password=password)
             if user is not None:
+                concurrent_limit_state = get_concurrent_limit_state()
+                if concurrent_limit_state.enabled:
+                    cleanup_stale_presence()
+                    user_is_staff = bool(user.is_staff or user.is_superuser)
+                    bypass = concurrent_limit_state.staff_bypass and user_is_staff
+                    current_active = count_active_online_non_staff_users()
+                    already_online = is_user_online_non_staff(user)
+                    if (not bypass) and (not already_online) and (
+                        current_active >= concurrent_limit_state.max_concurrent_logins
+                    ):
+                        logger.warning(
+                            " [LOGIN BLOCKED CONCURRENT] username=%s ip=%s online=%s limit=%s",
+                            username,
+                            ip,
+                            current_active,
+                            concurrent_limit_state.max_concurrent_logins,
+                            extra=_log_extra(request),
+                        )
+                        audit_logger.warning(
+                            "action=login status=blocked reason=concurrent_limit code=CONCURRENT_LIMIT_REACHED "
+                            f"online={current_active} limit={concurrent_limit_state.max_concurrent_logins}",
+                            extra=_audit_extra(request, user=username),
+                        )
+                        return _inertia_render_with_status(
+                            request,
+                            "Auth/Login",
+                            props={
+                                "errors": {"auth": concurrent_limit_state.message},
+                                "registration_enabled": registration_enabled,
+                                **_maintenance_props(forced_logout=False),
+                            },
+                            status=403,
+                        )
+
                 login(request, user)
+                session_key = request.session.session_key
+                if not session_key:
+                    request.session.save()
+                    session_key = request.session.session_key
+                mark_presence_login(
+                    user=user,
+                    session_key=session_key or "",
+                    ip_address=ip,
+                    user_agent=request.META.get("HTTP_USER_AGENT", "") or "",
+                )
                 logger.info(f" [LOGIN SUCCESS] user={user.username} id={user.id} ip={ip}", extra=_log_extra(request))
                 audit_logger.info(
                     f"action=login status=success user_id={user.id}",
@@ -329,10 +429,13 @@ def logout_view(request):
     if request.user.is_authenticated:
         ip = _get_client_ip(request)
         user_name = request.user.username
+        session_key = request.session.session_key or ""
+        if session_key:
+            mark_presence_inactive(session_key=session_key)
         logout(request)
         logger.info(f" [LOGOUT] user='{user_name}' ip={ip}", extra=_log_extra(request))
         audit_logger.info(
-            "action=logout status=success",
+            f"action=logout status=success session_key={session_key[:10]}",
             extra=_audit_extra(request, user=user_name),
         )
     return redirect("login")

@@ -13,8 +13,18 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 import logging
-from .models import AcademicDocument, ChatHistory, ChatSession, PlannerHistory, UserQuota, LLMConfiguration, SystemSetting
-from .system_settings import get_maintenance_state
+from .models import (
+    AcademicDocument,
+    ChatHistory,
+    ChatSession,
+    PlannerHistory,
+    UserQuota,
+    LLMConfiguration,
+    SystemSetting,
+    UserLoginPresence,
+)
+from .presence import build_presence_summary, cleanup_stale_presence
+from .system_settings import get_concurrent_limit_state, get_maintenance_state, get_registration_limit_state
 
 audit_logger = logging.getLogger("audit")
 # --- KONFIGURASI HEADER ADMIN ---
@@ -153,6 +163,42 @@ class UserQuotaForm(forms.ModelForm):
 UserQuotaAdmin.form = UserQuotaForm
 
 
+@admin.register(UserLoginPresence)
+class UserLoginPresenceAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "session_key_short",
+        "is_active",
+        "ip_address",
+        "logged_in_at",
+        "last_seen_at",
+        "logged_out_at",
+    )
+    list_filter = ("is_active", "logged_in_at", "last_seen_at")
+    search_fields = ("user__username", "session_key", "ip_address", "user_agent")
+    readonly_fields = (
+        "user",
+        "session_key",
+        "ip_address",
+        "user_agent",
+        "logged_in_at",
+        "last_seen_at",
+        "logged_out_at",
+        "is_active",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def session_key_short(self, obj):
+        return f"{obj.session_key[:12]}..." if obj.session_key else "-"
+
+    session_key_short.short_description = "Session"
+
+
 class LLMConfigurationAdminForm(forms.ModelForm):
     openrouter_api_key = forms.CharField(
         required=False,
@@ -239,7 +285,15 @@ class LLMConfigurationAdmin(admin.ModelAdmin):
 
 @admin.register(SystemSetting)
 class SystemSettingAdmin(admin.ModelAdmin):
-    list_display = ("id", "registration_enabled", "maintenance_enabled", "allow_staff_bypass", "updated_at")
+    list_display = (
+        "id",
+        "registration_enabled",
+        "registration_limit_enabled",
+        "concurrent_login_limit_enabled",
+        "maintenance_enabled",
+        "allow_staff_bypass",
+        "updated_at",
+    )
     readonly_fields = ("updated_at",)
     fieldsets = (
         ("Authentication Feature Toggle", {
@@ -257,6 +311,21 @@ class SystemSettingAdmin(admin.ModelAdmin):
             "description": (
                 "Saat aktif, user non-staff akan dipaksa logout dan endpoint auth/API menampilkan "
                 "pesan maintenance. Staff/superuser bisa bypass jika opsi bypass aktif."
+            ),
+        }),
+        ("Capacity Control", {
+            "fields": (
+                "registration_limit_enabled",
+                "max_registered_users",
+                "registration_limit_message",
+                "concurrent_login_limit_enabled",
+                "max_concurrent_logins",
+                "concurrent_limit_message",
+                "staff_bypass_concurrent_limit",
+            ),
+            "description": (
+                "Atur kapasitas tahap uji coba: batas total user non-staff terdaftar dan batas "
+                "jumlah user online bersamaan."
             ),
         }),
     )
@@ -322,7 +391,10 @@ def _build_single_log_payload(log_type: str, lines: int = 300) -> dict:
 
 def _build_dashboard_metrics() -> dict:
     User = get_user_model()
+    cleanup_stale_presence()
+
     total_users = User.objects.count()
+    registered_non_staff_count = User.objects.filter(is_staff=False, is_superuser=False).count()
     total_docs = AcademicDocument.objects.count()
     embedded_docs = AcademicDocument.objects.filter(is_embedded=True).count()
     total_sessions = ChatSession.objects.count()
@@ -332,11 +404,29 @@ def _build_dashboard_metrics() -> dict:
     latest_doc = AcademicDocument.objects.order_by("-uploaded_at").first()
     latest_chat = ChatHistory.objects.order_by("-timestamp").first()
     latest_cfg = LLMConfiguration.objects.order_by("-updated_at").first()
+
     maintenance = get_maintenance_state()
     maintenance_message = (maintenance.message or "").strip()
+    registration_limit = get_registration_limit_state()
+    concurrent_limit = get_concurrent_limit_state()
+    presence = build_presence_summary(limit=100)
+
+    reg_limit = max(registration_limit.max_registered_users, 1)
+    conc_limit = max(concurrent_limit.max_concurrent_logins, 1)
+
+    reg_pct = int(min((registered_non_staff_count / reg_limit) * 100, 100))
+    conc_pct = int(min((presence.active_online_non_staff_count / conc_limit) * 100, 100))
+
+    def _cap_status(pct: int) -> str:
+        if pct >= 100:
+            return "FULL"
+        if pct >= 80:
+            return "NEAR LIMIT"
+        return "OPEN"
 
     return {
         "kpi_total_users": total_users,
+        "kpi_registered_non_staff_count": registered_non_staff_count,
         "kpi_total_docs": total_docs,
         "kpi_embedded_docs": embedded_docs,
         "kpi_total_sessions": total_sessions,
@@ -350,6 +440,17 @@ def _build_dashboard_metrics() -> dict:
         "kpi_maintenance_message": maintenance_message,
         "kpi_maintenance_start_at": maintenance.start_at,
         "kpi_maintenance_estimated_end_at": maintenance.estimated_end_at,
+        "kpi_registration_limit_enabled": registration_limit.enabled,
+        "kpi_registered_limit": registration_limit.max_registered_users,
+        "kpi_registered_usage_pct": reg_pct,
+        "kpi_registered_capacity_status": _cap_status(reg_pct),
+        "kpi_concurrent_limit_enabled": concurrent_limit.enabled,
+        "kpi_concurrent_limit": concurrent_limit.max_concurrent_logins,
+        "kpi_active_online_non_staff_count": presence.active_online_non_staff_count,
+        "kpi_concurrent_usage_pct": conc_pct,
+        "kpi_concurrent_capacity_status": _cap_status(conc_pct),
+        "kpi_online_users": presence.online_users,
+        "kpi_recent_registered_users": presence.recent_registered_users,
     }
 
 
@@ -365,6 +466,28 @@ def system_logs_view(request):
 
 def system_logs_tail_api(request):
     payload = _build_logs_payload(lines=300)
+    return JsonResponse(payload)
+
+
+def realtime_users_api(request):
+    cleanup_stale_presence()
+    registration_limit = get_registration_limit_state()
+    concurrent_limit = get_concurrent_limit_state()
+    presence = build_presence_summary(limit=100)
+    registered_non_staff_count = get_user_model().objects.filter(is_staff=False, is_superuser=False).count()
+
+    payload = {
+        "summary": {
+            "registered_non_staff_count": registered_non_staff_count,
+            "registered_limit_enabled": registration_limit.enabled,
+            "registered_limit": registration_limit.max_registered_users,
+            "active_online_non_staff_count": presence.active_online_non_staff_count,
+            "concurrent_limit_enabled": concurrent_limit.enabled,
+            "concurrent_limit": concurrent_limit.max_concurrent_logins,
+        },
+        "online_users": presence.online_users,
+        "recent_registered_users": presence.recent_registered_users,
+    }
     return JsonResponse(payload)
 
 
@@ -438,14 +561,19 @@ def _custom_admin_get_urls():
             name="system_logs",
         ),
         path(
-            "system-logs/<str:log_type>/",
-            admin.site.admin_view(system_log_detail_view),
-            name="system_logs_detail",
-        ),
-        path(
             "system-logs/tail/",
             admin.site.admin_view(system_logs_tail_api),
             name="system_logs_tail",
+        ),
+        path(
+            "realtime-users/",
+            admin.site.admin_view(realtime_users_api),
+            name="realtime_users",
+        ),
+        path(
+            "system-logs/<str:log_type>/",
+            admin.site.admin_view(system_log_detail_view),
+            name="system_logs_detail",
         ),
         path(
             "system-logs/<str:log_type>/tail/",
@@ -487,6 +615,7 @@ def _custom_admin_index(request, extra_context=None):
     context["quick_chats_url"] = "/admin/core/chathistory/"
     context["quick_sessions_url"] = "/admin/core/chatsession/"
     context["quick_llm_url"] = "/admin/core/llmconfiguration/"
+    context["quick_presence_url"] = "/admin/core/userloginpresence/"
     return _original_admin_index(request, extra_context=context)
 
 

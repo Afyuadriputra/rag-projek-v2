@@ -52,6 +52,7 @@ MIDDLEWARE = [
 
     # ✅ Tambahan: Request ID + access log (tidak mengubah behavior endpoint)
     'core.middleware.RequestContextMiddleware',
+    'core.middleware.UserPresenceMiddleware',
     'core.middleware.MaintenanceModeMiddleware',
 
     'django.middleware.clickjacking.XFrameOptionsMiddleware',

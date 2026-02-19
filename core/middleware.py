@@ -7,10 +7,17 @@ from django.contrib.auth import logout
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
+from .presence import (
+    PRESENCE_TOUCH_THROTTLE_SECONDS,
+    mark_presence_inactive,
+    maybe_cleanup_stale_presence,
+    touch_presence,
+)
 from .system_settings import get_maintenance_state
 
 logger = logging.getLogger("request")
 audit_logger = logging.getLogger("audit")
+
 
 class RequestContextMiddleware:
     """
@@ -26,10 +33,17 @@ class RequestContextMiddleware:
         t0 = time.time()
         response = None
         try:
-            # audit metadata (dipakai oleh audit logger)
             user_obj = getattr(request, "user", None)
-            username = getattr(user_obj, "username", "-") if user_obj and getattr(user_obj, "is_authenticated", False) else "-"
-            user_id = getattr(user_obj, "id", "-") if user_obj and getattr(user_obj, "is_authenticated", False) else "-"
+            username = (
+                getattr(user_obj, "username", "-")
+                if user_obj and getattr(user_obj, "is_authenticated", False)
+                else "-"
+            )
+            user_id = (
+                getattr(user_obj, "id", "-")
+                if user_obj and getattr(user_obj, "is_authenticated", False)
+                else "-"
+            )
             ip = request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR") or "-"
             ip = ip.split(",")[0].strip() if ip else "-"
             agent = request.META.get("HTTP_USER_AGENT") or "-"
@@ -76,6 +90,44 @@ class RequestContextMiddleware:
                     "referer": referer,
                 },
             )
+
+
+class UserPresenceMiddleware:
+    """
+    Memperbarui last_seen user login aktif secara throttled.
+    """
+
+    SESSION_TOUCH_KEY = "__presence_last_touch_ts"
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        maybe_cleanup_stale_presence(chance=0.01)
+
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            return self.get_response(request)
+
+        session_key = getattr(request.session, "session_key", "")
+        if not session_key:
+            return self.get_response(request)
+
+        now_ts = int(time.time())
+        last_touch = int(request.session.get(self.SESSION_TOUCH_KEY, 0) or 0)
+        if now_ts - last_touch < PRESENCE_TOUCH_THROTTLE_SECONDS:
+            return self.get_response(request)
+
+        try:
+            touched = touch_presence(session_key=session_key, throttle_seconds=PRESENCE_TOUCH_THROTTLE_SECONDS)
+            if touched:
+                request.session[self.SESSION_TOUCH_KEY] = now_ts
+                request.session.modified = True
+        except Exception:
+            # tracking presence tidak boleh mengganggu request utama
+            pass
+
+        return self.get_response(request)
 
 
 class MaintenanceModeMiddleware:
@@ -135,6 +187,9 @@ class MaintenanceModeMiddleware:
             username = getattr(user, "username", "-")
             user_id = getattr(user, "id", "-")
             ip = (request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR") or "-").split(",")[0].strip()
+            session_key = getattr(request.session, "session_key", "")
+            if session_key:
+                mark_presence_inactive(session_key=session_key)
             logout(request)
             audit_logger.warning(
                 f"action=maintenance_forced_logout status=success user_id={user_id} path={path}",

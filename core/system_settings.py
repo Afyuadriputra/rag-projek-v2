@@ -11,6 +11,15 @@ DEFAULT_MAINTENANCE_MESSAGE = (
     "Layanan login sementara tidak tersedia. Silakan coba kembali beberapa saat lagi."
 )
 
+DEFAULT_REGISTRATION_LIMIT_MESSAGE = (
+    "Pendaftaran akun baru sementara ditutup karena kuota pengguna tahap uji coba telah penuh."
+)
+
+DEFAULT_CONCURRENT_LIMIT_MESSAGE = (
+    "Sistem sedang mencapai batas pengguna aktif bersamaan. "
+    "Silakan coba login kembali beberapa saat lagi."
+)
+
 
 @dataclass(frozen=True)
 class MaintenanceState:
@@ -21,16 +30,34 @@ class MaintenanceState:
     allow_staff_bypass: bool
 
 
+@dataclass(frozen=True)
+class RegistrationLimitState:
+    enabled: bool
+    max_registered_users: int
+    message: str
+
+
+@dataclass(frozen=True)
+class ConcurrentLimitState:
+    enabled: bool
+    max_concurrent_logins: int
+    message: str
+    staff_bypass: bool
+
+
 def _iso(dt) -> Optional[str]:
     return dt.isoformat() if dt is not None else None
 
 
-def get_maintenance_state() -> MaintenanceState:
+def _get_cfg() -> SystemSetting | None:
     try:
-        cfg = SystemSetting.objects.first()
+        return SystemSetting.objects.first()
     except Exception:
-        cfg = None
+        return None
 
+
+def get_maintenance_state() -> MaintenanceState:
+    cfg = _get_cfg()
     if cfg is None:
         return MaintenanceState(
             enabled=False,
@@ -51,10 +78,41 @@ def get_maintenance_state() -> MaintenanceState:
 
 
 def get_registration_enabled() -> bool:
-    try:
-        cfg = SystemSetting.objects.first()
-    except Exception:
-        cfg = None
+    cfg = _get_cfg()
     if cfg is None:
         return True
     return bool(cfg.registration_enabled)
+
+
+def get_registration_limit_state() -> RegistrationLimitState:
+    cfg = _get_cfg()
+    if cfg is None:
+        return RegistrationLimitState(
+            enabled=False,
+            max_registered_users=1000,
+            message=DEFAULT_REGISTRATION_LIMIT_MESSAGE,
+        )
+
+    return RegistrationLimitState(
+        enabled=bool(cfg.registration_limit_enabled),
+        max_registered_users=max(int(cfg.max_registered_users or 0), 1),
+        message=cfg.get_effective_registration_limit_message() or DEFAULT_REGISTRATION_LIMIT_MESSAGE,
+    )
+
+
+def get_concurrent_limit_state() -> ConcurrentLimitState:
+    cfg = _get_cfg()
+    if cfg is None:
+        return ConcurrentLimitState(
+            enabled=False,
+            max_concurrent_logins=300,
+            message=DEFAULT_CONCURRENT_LIMIT_MESSAGE,
+            staff_bypass=True,
+        )
+
+    return ConcurrentLimitState(
+        enabled=bool(cfg.concurrent_login_limit_enabled),
+        max_concurrent_logins=max(int(cfg.max_concurrent_logins or 0), 1),
+        message=cfg.get_effective_concurrent_limit_message() or DEFAULT_CONCURRENT_LIMIT_MESSAGE,
+        staff_bypass=bool(cfg.staff_bypass_concurrent_limit),
+    )

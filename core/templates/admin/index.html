@@ -126,6 +126,75 @@
     color: #166534;
     border: 1px solid #bbf7d0;
   }
+  .capacity-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 90px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .capacity-open {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+  .capacity-near {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+  }
+  .capacity-full {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+  .mini-table-wrap {
+    overflow: auto;
+    border: 1px solid var(--hairline-color);
+    border-radius: 8px;
+  }
+  .mini-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .mini-table th,
+  .mini-table td {
+    border-bottom: 1px solid var(--hairline-color);
+    padding: 8px 10px;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .mini-table th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--body-quiet-color);
+  }
+  .mini-table tr:last-child td {
+    border-bottom: 0;
+  }
+  .dot-staff {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    margin-right: 6px;
+    background: #64748b;
+  }
+  .dot-user {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    margin-right: 6px;
+    background: #10b981;
+  }
   @media (max-width: 1280px) {
     .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .status-grid { grid-template-columns: 1fr; }
@@ -146,10 +215,12 @@
 <div id="content-main" class="dash-shell">
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-label">Users</div><div class="kpi-value">{{ kpi_total_users }}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Registered (Non-Staff)</div><div class="kpi-value" id="kpi-registered">{{ kpi_registered_non_staff_count }}</div></div>
     <div class="kpi-card"><div class="kpi-label">Documents</div><div class="kpi-value">{{ kpi_total_docs }}</div></div>
     <div class="kpi-card"><div class="kpi-label">Embedded</div><div class="kpi-value">{{ kpi_embedded_docs }}</div></div>
     <div class="kpi-card"><div class="kpi-label">Sessions</div><div class="kpi-value">{{ kpi_total_sessions }}</div></div>
     <div class="kpi-card"><div class="kpi-label">Messages</div><div class="kpi-value">{{ kpi_total_messages }}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Online (Non-Staff)</div><div class="kpi-value" id="kpi-online">{{ kpi_active_online_non_staff_count }}</div></div>
     <div class="kpi-card"><div class="kpi-label">LLM Config</div><div class="kpi-value">{{ kpi_active_llm_configs }}/{{ kpi_total_llm_configs }}</div></div>
   </div>
 
@@ -162,6 +233,7 @@
       <a class="button" href="{{ quick_sessions_url }}">Manage Sessions</a>
       <a class="button" href="{{ quick_chats_url }}">Manage Chat History</a>
       <a class="button" href="{{ quick_llm_url }}">Manage LLM Config</a>
+      <a class="button" href="{{ quick_presence_url }}">Manage Active Logins</a>
       <a class="button" href="{{ system_logs_url|default:'/admin/system-logs/' }}">Open Full Logs</a>
     </div>
   </section>
@@ -188,6 +260,110 @@
       <div class="status-item">
         <div class="kpi-label">Last LLM Config Update</div>
         <div><strong>{% if kpi_latest_cfg_time %}{{ kpi_latest_cfg_time }}{% else %}-{% endif %}</strong></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div class="panel-title">User Capacity</div>
+      <div class="log-meta">Update otomatis setiap 5 detik</div>
+    </div>
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="kpi-label">Registered Capacity</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <strong><span id="registered-ratio">{{ kpi_registered_non_staff_count }}</span> / <span id="registered-limit">{{ kpi_registered_limit }}</span></strong>
+          {% if kpi_registered_capacity_status == "FULL" %}
+            <span id="registered-status" class="capacity-badge capacity-full">{{ kpi_registered_capacity_status }}</span>
+          {% elif kpi_registered_capacity_status == "NEAR LIMIT" %}
+            <span id="registered-status" class="capacity-badge capacity-near">{{ kpi_registered_capacity_status }}</span>
+          {% else %}
+            <span id="registered-status" class="capacity-badge capacity-open">{{ kpi_registered_capacity_status }}</span>
+          {% endif %}
+        </div>
+        <div class="log-meta">Usage: <span id="registered-pct">{{ kpi_registered_usage_pct }}</span>%</div>
+      </div>
+      <div class="status-item">
+        <div class="kpi-label">Concurrent Online Capacity</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <strong><span id="online-ratio">{{ kpi_active_online_non_staff_count }}</span> / <span id="online-limit">{{ kpi_concurrent_limit }}</span></strong>
+          {% if kpi_concurrent_capacity_status == "FULL" %}
+            <span id="online-status" class="capacity-badge capacity-full">{{ kpi_concurrent_capacity_status }}</span>
+          {% elif kpi_concurrent_capacity_status == "NEAR LIMIT" %}
+            <span id="online-status" class="capacity-badge capacity-near">{{ kpi_concurrent_capacity_status }}</span>
+          {% else %}
+            <span id="online-status" class="capacity-badge capacity-open">{{ kpi_concurrent_capacity_status }}</span>
+          {% endif %}
+        </div>
+        <div class="log-meta">Usage: <span id="online-pct">{{ kpi_concurrent_usage_pct }}</span>%</div>
+      </div>
+      <div class="status-item">
+        <div class="kpi-label">Limit Config</div>
+        <div class="log-meta">
+          Register limit:
+          <strong id="register-limit-enabled">{% if kpi_registration_limit_enabled %}ON{% else %}OFF{% endif %}</strong>
+        </div>
+        <div class="log-meta">
+          Concurrent limit:
+          <strong id="concurrent-limit-enabled">{% if kpi_concurrent_limit_enabled %}ON{% else %}OFF{% endif %}</strong>
+        </div>
+      </div>
+    </div>
+    <div class="monitor-grid">
+      <div>
+        <div class="log-meta"><strong>Online Users (Non-Staff)</strong></div>
+        <div class="mini-table-wrap">
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>IP</th>
+                <th>Login At</th>
+                <th>Last Seen</th>
+              </tr>
+            </thead>
+            <tbody id="online-users-body">
+              {% for row in kpi_online_users %}
+                <tr>
+                  <td>{{ row.username }}</td>
+                  <td>{% if row.is_staff %}Staff{% else %}User{% endif %}</td>
+                  <td>{{ row.ip_address|default:"-" }}</td>
+                  <td>{{ row.logged_in_at|default:"-" }}</td>
+                  <td>{{ row.last_seen_at|default:"-" }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5">Belum ada user online.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="log-meta"><strong>Recent Registered Users</strong></div>
+        <div class="mini-table-wrap">
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Date Joined</th>
+              </tr>
+            </thead>
+            <tbody id="recent-users-body">
+              {% for row in kpi_recent_registered_users %}
+                <tr>
+                  <td>{{ row.username }}</td>
+                  <td>{% if row.is_staff %}Staff{% else %}User{% endif %}</td>
+                  <td>{{ row.date_joined|default:"-" }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="3">Belum ada data user.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
@@ -228,9 +404,24 @@
   const auditPath = document.getElementById("audit-path");
   const appSize = document.getElementById("app-size");
   const auditSize = document.getElementById("audit-size");
+  const kpiRegistered = document.getElementById("kpi-registered");
+  const kpiOnline = document.getElementById("kpi-online");
+  const registeredRatio = document.getElementById("registered-ratio");
+  const registeredLimit = document.getElementById("registered-limit");
+  const registeredPct = document.getElementById("registered-pct");
+  const registeredStatus = document.getElementById("registered-status");
+  const onlineRatio = document.getElementById("online-ratio");
+  const onlineLimit = document.getElementById("online-limit");
+  const onlinePct = document.getElementById("online-pct");
+  const onlineStatus = document.getElementById("online-status");
+  const registerLimitEnabled = document.getElementById("register-limit-enabled");
+  const concurrentLimitEnabled = document.getElementById("concurrent-limit-enabled");
+  const onlineUsersBody = document.getElementById("online-users-body");
+  const recentUsersBody = document.getElementById("recent-users-body");
   const autoEl = document.getElementById("monitor-auto");
   const refreshBtn = document.getElementById("monitor-refresh");
   const tailUrl = "{% url 'admin:system_logs_tail' %}";
+  const realtimeUsersUrl = "{% url 'admin:realtime_users' %}";
 
   function escHtml(s) {
     return String(s || "")
@@ -291,13 +482,124 @@
     }
   }
 
+  function formatTime(value) {
+    if (!value) return "-";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "-";
+    return d.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
+  function resolveCapacityClass(status) {
+    if (status === "FULL") return "capacity-badge capacity-full";
+    if (status === "NEAR LIMIT") return "capacity-badge capacity-near";
+    return "capacity-badge capacity-open";
+  }
+
+  function resolveCapacityStatus(usagePct) {
+    if (usagePct >= 100) return "FULL";
+    if (usagePct >= 80) return "NEAR LIMIT";
+    return "OPEN";
+  }
+
+  function renderOnlineUsers(rows) {
+    if (!rows || rows.length === 0) {
+      onlineUsersBody.innerHTML = "<tr><td colspan='5'>Belum ada user online.</td></tr>";
+      return;
+    }
+    onlineUsersBody.innerHTML = rows
+      .map((row) => {
+        const role = row.is_staff ? "Staff" : "User";
+        return (
+          "<tr>" +
+          `<td>${escHtml(row.username || "-")}</td>` +
+          `<td>${escHtml(role)}</td>` +
+          `<td>${escHtml(row.ip_address || "-")}</td>` +
+          `<td>${escHtml(formatTime(row.logged_in_at))}</td>` +
+          `<td>${escHtml(formatTime(row.last_seen_at))}</td>` +
+          "</tr>"
+        );
+      })
+      .join("");
+  }
+
+  function renderRecentUsers(rows) {
+    if (!rows || rows.length === 0) {
+      recentUsersBody.innerHTML = "<tr><td colspan='3'>Belum ada data user.</td></tr>";
+      return;
+    }
+    recentUsersBody.innerHTML = rows
+      .map((row) => {
+        const role = row.is_staff ? "Staff" : "User";
+        return (
+          "<tr>" +
+          `<td>${escHtml(row.username || "-")}</td>` +
+          `<td>${escHtml(role)}</td>` +
+          `<td>${escHtml(formatTime(row.date_joined))}</td>` +
+          "</tr>"
+        );
+      })
+      .join("");
+  }
+
+  async function pullRealtimeUsers() {
+    try {
+      const res = await fetch(realtimeUsersUrl, { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const summary = data.summary || {};
+      const registeredCount = Number(summary.registered_non_staff_count || 0);
+      const regLimit = Number(summary.registered_limit || 1);
+      const onlineCount = Number(summary.active_online_non_staff_count || 0);
+      const concLimit = Number(summary.concurrent_limit || 1);
+
+      const regPctValue = Math.min(100, Math.round((registeredCount / Math.max(regLimit, 1)) * 100));
+      const concPctValue = Math.min(100, Math.round((onlineCount / Math.max(concLimit, 1)) * 100));
+      const regStatusValue = resolveCapacityStatus(regPctValue);
+      const concStatusValue = resolveCapacityStatus(concPctValue);
+
+      kpiRegistered.textContent = String(registeredCount);
+      kpiOnline.textContent = String(onlineCount);
+      registeredRatio.textContent = String(registeredCount);
+      registeredLimit.textContent = String(regLimit);
+      registeredPct.textContent = String(regPctValue);
+      registeredStatus.textContent = regStatusValue;
+      registeredStatus.className = resolveCapacityClass(regStatusValue);
+      onlineRatio.textContent = String(onlineCount);
+      onlineLimit.textContent = String(concLimit);
+      onlinePct.textContent = String(concPctValue);
+      onlineStatus.textContent = concStatusValue;
+      onlineStatus.className = resolveCapacityClass(concStatusValue);
+      registerLimitEnabled.textContent = summary.registered_limit_enabled ? "ON" : "OFF";
+      concurrentLimitEnabled.textContent = summary.concurrent_limit_enabled ? "ON" : "OFF";
+
+      renderOnlineUsers(data.online_users || []);
+      renderRecentUsers(data.recent_registered_users || []);
+    } catch (_) {
+      // no-op
+    }
+  }
+
   renderLog(appEl, appEl.textContent || "");
   renderLog(auditEl, auditEl.textContent || "");
 
-  refreshBtn.addEventListener("click", pullLogs);
+  refreshBtn.addEventListener("click", function () {
+    pullLogs();
+    pullRealtimeUsers();
+  });
   setInterval(function () {
-    if (autoEl.checked) pullLogs();
+    if (autoEl.checked) {
+      pullLogs();
+      pullRealtimeUsers();
+    }
   }, 5000);
+  pullRealtimeUsers();
 })();
 </script>
 {% endblock %}
