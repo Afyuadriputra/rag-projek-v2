@@ -15,7 +15,8 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError
 
 from . import service  #  business logic dipindah ke core/service.py
-from .models import UserQuota, SystemSetting, ChatSession
+from .models import UserQuota, ChatSession
+from .system_settings import get_maintenance_state, get_registration_enabled
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("audit")
@@ -75,19 +76,45 @@ def _normalize_planner_payload(payload: dict, state: dict) -> dict:
 
 
 def _is_registration_enabled() -> bool:
-    try:
-        cfg = SystemSetting.objects.first()
-        if cfg is None:
-            return True
-        return bool(cfg.registration_enabled)
-    except Exception:
-        return True
+    return get_registration_enabled()
+
+
+def _maintenance_props(forced_logout: bool = False) -> dict:
+    state = get_maintenance_state()
+    return {
+        "maintenance_enabled": state.enabled,
+        "maintenance_message": state.message,
+        "maintenance_start_at": state.start_at,
+        "maintenance_estimated_end_at": state.estimated_end_at,
+        "forced_logout": forced_logout,
+    }
+
+
+def _inertia_render_with_status(request, component: str, props: dict, status: int):
+    resp = inertia_render(request, component, props=props)
+    resp.status_code = status
+    return resp
 
 
 # =========================
 # AUTH VIEWS
 # =========================
 def register_view(request):
+    maintenance_state = get_maintenance_state()
+    if maintenance_state.enabled:
+        ip = _get_client_ip(request)
+        logger.warning(f" [REGISTER BLOCKED MAINTENANCE] ip={ip}", extra=_log_extra(request))
+        audit_logger.warning(
+            "action=register status=blocked reason=maintenance",
+            extra=_audit_extra(request),
+        )
+        props = {
+            "registration_enabled": False,
+            "errors": {"auth": "Sistem sedang maintenance. Silakan coba beberapa saat lagi."},
+            **_maintenance_props(forced_logout=False),
+        }
+        return _inertia_render_with_status(request, "Auth/Register", props=props, status=503)
+
     if request.user.is_authenticated:
         logger.info(" [AUTH] already logged in -> redirect home", extra=_log_extra(request))
         return redirect("home")
@@ -106,6 +133,7 @@ def register_view(request):
             props={
                 "registration_enabled": False,
                 "errors": {"auth": "Pendaftaran saat ini dinonaktifkan oleh admin."},
+                **_maintenance_props(forced_logout=False),
             },
             status=403,
         )
@@ -134,7 +162,11 @@ def register_view(request):
                 return inertia_render(
                     request,
                     "Auth/Register",
-                    props={"errors": errors, "registration_enabled": True},
+                    props={
+                        "errors": errors,
+                        "registration_enabled": True,
+                        **_maintenance_props(forced_logout=False),
+                    },
                 )
 
             user = User.objects.create_user(username=username, email=email, password=password)
@@ -162,7 +194,11 @@ def register_view(request):
             return inertia_render(
                 request,
                 "Auth/Register",
-                props={"errors": {"username": "Username sudah digunakan."}, "registration_enabled": True},
+                props={
+                    "errors": {"username": "Username sudah digunakan."},
+                    "registration_enabled": True,
+                    **_maintenance_props(forced_logout=False),
+                },
             )
         except Exception as e:
             logger.error(f" [REGISTER ERROR] ip={ip} err={repr(e)}", extra=_log_extra(request), exc_info=True)
@@ -173,13 +209,37 @@ def register_view(request):
             return inertia_render(
                 request,
                 "Auth/Register",
-                props={"errors": {"auth": "Terjadi kesalahan server."}, "registration_enabled": True},
+                props={
+                    "errors": {"auth": "Terjadi kesalahan server."},
+                    "registration_enabled": True,
+                    **_maintenance_props(forced_logout=False),
+                },
             )
 
-    return inertia_render(request, "Auth/Register", props={"registration_enabled": True})
+    return inertia_render(
+        request,
+        "Auth/Register",
+        props={"registration_enabled": True, **_maintenance_props(forced_logout=False)},
+    )
 
 
 def login_view(request):
+    maintenance_state = get_maintenance_state()
+    if maintenance_state.enabled:
+        ip = _get_client_ip(request)
+        forced_logout = request.GET.get("forced") == "1"
+        logger.warning(f" [LOGIN BLOCKED MAINTENANCE] ip={ip} forced={forced_logout}", extra=_log_extra(request))
+        audit_logger.warning(
+            "action=login status=blocked reason=maintenance",
+            extra=_audit_extra(request),
+        )
+        props = {
+            "errors": {"auth": "Sistem sedang maintenance. Silakan coba beberapa saat lagi."},
+            "registration_enabled": _is_registration_enabled(),
+            **_maintenance_props(forced_logout=forced_logout),
+        }
+        return _inertia_render_with_status(request, "Auth/Login", props=props, status=503)
+
     if request.user.is_authenticated:
         logger.info(" [AUTH] already logged in -> redirect home", extra=_log_extra(request))
         return redirect("home")
@@ -208,6 +268,7 @@ def login_view(request):
                         props={
                             "errors": {"auth": "Terlalu banyak percobaan. Coba lagi nanti."},
                             "registration_enabled": registration_enabled,
+                            **_maintenance_props(forced_logout=False),
                         },
                         status=403,
                     )
@@ -235,6 +296,7 @@ def login_view(request):
                 props={
                     "errors": {"auth": "Username atau password salah."},
                     "registration_enabled": registration_enabled,
+                    **_maintenance_props(forced_logout=False),
                 },
             )
         except Exception as e:
@@ -249,10 +311,18 @@ def login_view(request):
                 props={
                     "errors": {"auth": "Error sistem."},
                     "registration_enabled": registration_enabled,
+                    **_maintenance_props(forced_logout=False),
                 },
             )
 
-    return inertia_render(request, "Auth/Login", props={"registration_enabled": registration_enabled})
+    return inertia_render(
+        request,
+        "Auth/Login",
+        props={
+            "registration_enabled": registration_enabled,
+            **_maintenance_props(forced_logout=False),
+        },
+    )
 
 
 def logout_view(request):

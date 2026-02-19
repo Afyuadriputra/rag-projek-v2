@@ -1,14 +1,16 @@
-﻿from django.db import models
+from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 import os
+
 
 class AcademicDocument(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     title = models.CharField(max_length=255, blank=True)
     # File akan disimpan di media/documents/tahun/bulan/
-    file = models.FileField(upload_to='documents/%Y/%m/')
+    file = models.FileField(upload_to="documents/%Y/%m/")
     uploaded_at = models.DateTimeField(auto_now_add=True)
-    is_embedded = models.BooleanField(default=False) 
+    is_embedded = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
         # Auto-fill title dari nama file jika kosong
@@ -18,6 +20,7 @@ class AcademicDocument(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.title}"
+
 
 class ChatSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -31,6 +34,7 @@ class ChatSession(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.title}"
 
+
 class ChatHistory(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     session = models.ForeignKey(ChatSession, null=True, blank=True, on_delete=models.CASCADE)
@@ -39,7 +43,7 @@ class ChatHistory(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-timestamp'] # Yang terbaru muncul duluan
+        ordering = ["-timestamp"]  # Yang terbaru muncul duluan
 
     def __str__(self):
         return f"{self.user.username}: {self.question[:20]}..."
@@ -95,6 +99,7 @@ class LLMConfiguration(models.Model):
     Konfigurasi runtime LLM berbasis DB.
     Bisa CRUD via Django Admin, dan sistem memakai konfigurasi yang aktif terbaru.
     """
+
     name = models.CharField(max_length=100, default="Default")
     is_active = models.BooleanField(default=True)
     openrouter_api_key = models.CharField(max_length=255, blank=True)
@@ -121,12 +126,85 @@ class SystemSetting(models.Model):
     """
     Singleton pengaturan sistem global.
     """
+
     registration_enabled = models.BooleanField(default=True)
+    maintenance_enabled = models.BooleanField(default=False)
+    maintenance_message = models.TextField(blank=True, default="")
+    maintenance_start_at = models.DateTimeField(null=True, blank=True)
+    maintenance_estimated_end_at = models.DateTimeField(null=True, blank=True)
+    allow_staff_bypass = models.BooleanField(default=True)
+
+    registration_limit_enabled = models.BooleanField(default=False)
+    max_registered_users = models.PositiveIntegerField(default=1000)
+    registration_limit_message = models.TextField(blank=True, default="")
+
+    concurrent_login_limit_enabled = models.BooleanField(default=False)
+    max_concurrent_logins = models.PositiveIntegerField(default=300)
+    concurrent_limit_message = models.TextField(blank=True, default="")
+    staff_bypass_concurrent_limit = models.BooleanField(default=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
         self.pk = 1
         super().save(*args, **kwargs)
 
+    def get_effective_maintenance_message(self) -> str:
+        msg = (self.maintenance_message or "").strip()
+        if msg:
+            return msg
+        return (
+            "Kami sedang melakukan pemeliharaan terjadwal untuk meningkatkan kualitas layanan. "
+            "Layanan login sementara tidak tersedia."
+        )
+
+    def get_effective_registration_limit_message(self) -> str:
+        msg = (self.registration_limit_message or "").strip()
+        if msg:
+            return msg
+        return (
+            "Pendaftaran akun baru sementara ditutup karena kuota pengguna tahap uji coba "
+            "telah penuh."
+        )
+
+    def get_effective_concurrent_limit_message(self) -> str:
+        msg = (self.concurrent_limit_message or "").strip()
+        if msg:
+            return msg
+        return (
+            "Sistem sedang mencapai batas pengguna aktif bersamaan. "
+            "Silakan coba login kembali beberapa saat lagi."
+        )
+
     def __str__(self):
-        return f"SystemSetting(registration_enabled={self.registration_enabled})"
+        return (
+            "SystemSetting("
+            f"registration_enabled={self.registration_enabled}, "
+            f"maintenance_enabled={self.maintenance_enabled}, "
+            f"allow_staff_bypass={self.allow_staff_bypass}, "
+            f"registration_limit_enabled={self.registration_limit_enabled}, "
+            f"concurrent_login_limit_enabled={self.concurrent_login_limit_enabled}"
+            ")"
+        )
+
+
+class UserLoginPresence(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="login_presences")
+    session_key = models.CharField(max_length=128, unique=True)
+    ip_address = models.CharField(max_length=64, blank=True, default="")
+    user_agent = models.CharField(max_length=512, blank=True, default="")
+    logged_in_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    logged_out_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["is_active", "last_seen_at"]),
+            models.Index(fields=["user", "is_active"]),
+        ]
+        ordering = ["-last_seen_at"]
+
+    def __str__(self):
+        state = "active" if self.is_active else "inactive"
+        return f"{self.user.username} [{state}] {self.session_key[:10]}"

@@ -14,6 +14,7 @@ from datetime import datetime
 import shutil
 import logging
 from .models import AcademicDocument, ChatHistory, ChatSession, PlannerHistory, UserQuota, LLMConfiguration, SystemSetting
+from .system_settings import get_maintenance_state
 
 audit_logger = logging.getLogger("audit")
 # --- KONFIGURASI HEADER ADMIN ---
@@ -238,12 +239,25 @@ class LLMConfigurationAdmin(admin.ModelAdmin):
 
 @admin.register(SystemSetting)
 class SystemSettingAdmin(admin.ModelAdmin):
-    list_display = ("id", "registration_enabled", "updated_at")
+    list_display = ("id", "registration_enabled", "maintenance_enabled", "allow_staff_bypass", "updated_at")
     readonly_fields = ("updated_at",)
     fieldsets = (
         ("Authentication Feature Toggle", {
             "fields": ("registration_enabled", "updated_at"),
             "description": "Aktif/nonaktifkan fitur pendaftaran user baru (register).",
+        }),
+        ("Maintenance Mode", {
+            "fields": (
+                "maintenance_enabled",
+                "maintenance_message",
+                "maintenance_start_at",
+                "maintenance_estimated_end_at",
+                "allow_staff_bypass",
+            ),
+            "description": (
+                "Saat aktif, user non-staff akan dipaksa logout dan endpoint auth/API menampilkan "
+                "pesan maintenance. Staff/superuser bisa bypass jika opsi bypass aktif."
+            ),
         }),
     )
 
@@ -318,6 +332,8 @@ def _build_dashboard_metrics() -> dict:
     latest_doc = AcademicDocument.objects.order_by("-uploaded_at").first()
     latest_chat = ChatHistory.objects.order_by("-timestamp").first()
     latest_cfg = LLMConfiguration.objects.order_by("-updated_at").first()
+    maintenance = get_maintenance_state()
+    maintenance_message = (maintenance.message or "").strip()
 
     return {
         "kpi_total_users": total_users,
@@ -330,6 +346,10 @@ def _build_dashboard_metrics() -> dict:
         "kpi_latest_doc_time": getattr(latest_doc, "uploaded_at", None),
         "kpi_latest_chat_time": getattr(latest_chat, "timestamp", None),
         "kpi_latest_cfg_time": getattr(latest_cfg, "updated_at", None),
+        "kpi_maintenance_enabled": maintenance.enabled,
+        "kpi_maintenance_message": maintenance_message,
+        "kpi_maintenance_start_at": maintenance.start_at,
+        "kpi_maintenance_estimated_end_at": maintenance.estimated_end_at,
     }
 
 

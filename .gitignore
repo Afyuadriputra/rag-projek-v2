@@ -12,9 +12,7 @@ ENV/
 # ==========================================
 # Databases & Local Data (Data User/Sensitive)
 # ==========================================
-db.sqlite3
-db.sqlite3-journal
-chroma_db/
+
 media/
 out_csv/
 

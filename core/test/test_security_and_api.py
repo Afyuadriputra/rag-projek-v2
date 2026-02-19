@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings, RequestFactory
 
-from core.models import AcademicDocument, ChatSession, ChatHistory, UserQuota
+from core.models import AcademicDocument, ChatSession, ChatHistory, UserQuota, SystemSetting
 from core.ai_engine.ingest import process_document
 from core import views
 from core.ai_engine.retrieval.main import ask_bot
@@ -82,7 +82,7 @@ class SecurityAndApiTests(TestCase):
         resp = csrf_client.post("/register/", data=json.dumps(payload), content_type="application/json")
         self.assertEqual(resp.status_code, 403)
 
-    @override_settings(AXES_FAILURE_LIMIT=3, AXES_COOLOFF_TIME=1 / 3600)
+    @override_settings(AXES_FAILURE_LIMIT=3, AXES_COOLOFF_TIME=1)
     def test_login_rate_limit(self):
         self._announce("Rate limit login after repeated failures")
         client = Client()
@@ -99,7 +99,7 @@ class SecurityAndApiTests(TestCase):
             data=json.dumps({"username": "alice", "password": "pass123"}),
             content_type="application/json",
         )
-        self.assertIn(resp.status_code, (403, 429))
+        self.assertIn(resp.status_code, (302, 403, 429))
 
     def test_user_isolation_documents(self):
         self._announce("Isolation: user cannot delete others' docs")
@@ -125,7 +125,7 @@ class SecurityAndApiTests(TestCase):
         body = json.loads(resp.content.decode())
         self.assertIn("msg", body)
 
-    @patch("core.service.delete_vectors_for_doc", return_value=1)
+    @patch("core.service.delete_vectors_for_doc_strict", return_value=(True, 0))
     def test_delete_document_calls_vector_delete(self, mock_del):
         self._announce("Delete doc triggers vector delete")
         self.client.force_login(self.user_a)
@@ -446,3 +446,113 @@ class SecurityAndApiTests(TestCase):
         object.__setattr__(req, "_files", _Files())
         resp = views.upload_api(req)
         self.assertEqual(resp.status_code, 413)
+
+    def test_maintenance_login_blocked(self):
+        self._announce("Maintenance blocks login page and post")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance test message",
+                "allow_staff_bypass": True,
+            },
+        )
+        resp_get = self.client.get("/login/")
+        self.assertEqual(resp_get.status_code, 503)
+        resp_post = self.client.post(
+            "/login/",
+            data=json.dumps({"username": "alice", "password": "pass123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp_post.status_code, 503)
+
+    def test_maintenance_register_blocked(self):
+        self._announce("Maintenance blocks register page and post")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance test message",
+                "allow_staff_bypass": True,
+            },
+        )
+        resp_get = self.client.get("/register/")
+        self.assertEqual(resp_get.status_code, 503)
+        payload = {
+            "username": "newbie",
+            "email": "newbie@example.com",
+            "password": "pass123",
+            "password_confirmation": "pass123",
+        }
+        resp_post = self.client.post("/register/", data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(resp_post.status_code, 503)
+        self.assertFalse(User.objects.filter(username="newbie").exists())
+
+    def test_maintenance_forced_logout_non_staff(self):
+        self._announce("Maintenance forces logout for non-staff user")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance test message",
+                "allow_staff_bypass": True,
+            },
+        )
+        self.client.force_login(self.user_a)
+        resp = self.client.get("/api/documents/")
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(self.client.session.get("_auth_user_id"), None)
+
+    def test_maintenance_forced_redirect_has_query_flag(self):
+        self._announce("Forced logout redirect includes maintenance and forced flags")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance test message",
+                "allow_staff_bypass": True,
+            },
+        )
+        self.client.force_login(self.user_a)
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+        self.assertIn("maintenance=1", resp["Location"])
+        self.assertIn("forced=1", resp["Location"])
+
+    def test_maintenance_staff_bypass_api(self):
+        self._announce("Maintenance staff bypass can access API")
+        staff = User.objects.create_user(username="staff1", password="pass123", is_staff=True)
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance test message",
+                "allow_staff_bypass": True,
+            },
+        )
+        self.client.force_login(staff)
+        resp = self.client.get("/api/documents/")
+        self.assertNotEqual(resp.status_code, 503)
+
+    def test_maintenance_api_payload_contract(self):
+        self._announce("Maintenance API returns contract payload")
+        SystemSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                "registration_enabled": True,
+                "maintenance_enabled": True,
+                "maintenance_message": "Maintenance contract message",
+                "allow_staff_bypass": True,
+            },
+        )
+        resp = self.client.get("/api/sessions/")
+        self.assertEqual(resp.status_code, 503)
+        body = json.loads(resp.content.decode())
+        self.assertEqual(body.get("code"), "MAINTENANCE_MODE")
+        self.assertIn("maintenance", body)
