@@ -3,10 +3,22 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.1); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.2); }
+.chat-scrollbar::-webkit-scrollbar { width: 6px; }
+.chat-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(63, 63, 70, 0.34);
+  border-radius: 9999px;
+}
+.chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(63, 63, 70, 0.5);
+}
+
+.dark .chat-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(212, 212, 216, 0.36);
+}
+.dark .chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 212, 216, 0.52);
+}
 
 .glass-panel {
   background: rgba(255, 255, 255, 0.8);

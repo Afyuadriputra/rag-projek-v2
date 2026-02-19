@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export default function ChatComposer({
@@ -12,24 +12,31 @@ export default function ChatComposer({
   loading?: boolean;
   deletingDoc?: boolean;
 }) {
+  const MAX_TEXTAREA_HEIGHT = 160;
   const [value, setValue] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const composingRef = useRef(false);
 
-  useEffect(() => {
+  const resizeTextarea = useCallback(() => {
     const ta = taRef.current;
     if (!ta) return;
-    ta.style.height = "0px";
-    ta.style.height = Math.min(160, ta.scrollHeight) + "px";
-  }, [value]);
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(MAX_TEXTAREA_HEIGHT, ta.scrollHeight)}px`;
+  }, []);
 
-  const submit = () => {
+  useEffect(() => {
+    resizeTextarea();
+  }, [value, resizeTextarea]);
+
+  const submit = useCallback(() => {
     const msg = value.trim();
     if (!msg || loading) return;
     onSend(msg);
     setValue("");
-    if (taRef.current) taRef.current.style.height = "auto";
-  };
+    const ta = taRef.current;
+    if (ta) ta.style.height = "auto";
+  }, [loading, onSend, value]);
 
   const canSend = !!value.trim() && !loading;
 
@@ -40,7 +47,7 @@ export default function ChatComposer({
         <div
           className={cn(
             "relative rounded-[34px] p-[2px]",
-            "transition-all duration-500 ease-out",
+            "transition-[transform] duration-300 ease-out motion-reduce:transition-none",
             isFocused ? "-translate-y-[2px]" : "hover:-translate-y-[1px]"
           )}
         >
@@ -66,7 +73,7 @@ export default function ChatComposer({
           <div
             className={cn(
               "pointer-events-none absolute inset-0 rounded-[34px]",
-              "shadow-[0_22px_70px_-26px_rgba(0,0,0,0.35)]",
+              "transition-shadow duration-300 ease-out motion-reduce:transition-none shadow-[0_22px_70px_-26px_rgba(0,0,0,0.35)]",
               isFocused ? "shadow-[0_30px_90px_-30px_rgba(0,0,0,0.40)]" : ""
             )}
           />
@@ -82,7 +89,7 @@ export default function ChatComposer({
               "before:bg-[radial-gradient(90%_80%_at_18%_0%,rgba(99,102,241,0.20)_0%,transparent_55%),radial-gradient(90%_80%_at_82%_120%,rgba(59,130,246,0.14)_0%,transparent_55%)]",
               "before:opacity-70",
               "border border-white/22 ring-1 ring-white/12 dark:border-zinc-700/70 dark:ring-zinc-700/40",
-              "transition-all duration-500 ease-out",
+              "transition-[background-color,border-color,box-shadow] duration-300 ease-out motion-reduce:transition-none",
               isFocused ? "bg-white/12 border-white/32 ring-white/22 dark:bg-zinc-900/80 dark:border-zinc-600 dark:ring-zinc-600/40" : "hover:bg-white/10 dark:hover:bg-zinc-900/70"
             )}
           >
@@ -111,9 +118,11 @@ export default function ChatComposer({
               type="button"
               onClick={onUploadClick}
               disabled={loading}
+              aria-label={deletingDoc ? "Unggah dinonaktifkan saat menghapus dokumen" : "Unggah dokumen"}
               className={cn(
-                "group relative flex size-10 flex-shrink-0 items-center justify-center rounded-full",
-                "transition-all duration-300 active:scale-95",
+                "group relative flex size-10 flex-shrink-0 items-center justify-center rounded-full touch-manipulation",
+                "transition-[transform,background-color,border-color,color,opacity] duration-200 active:scale-95 motion-reduce:transition-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-800/60 focus-visible:ring-offset-2 dark:focus-visible:ring-zinc-300/70 dark:focus-visible:ring-offset-zinc-900",
                 "text-zinc-800/70 hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-zinc-100",
                 "bg-white/10 hover:bg-white/18 dark:bg-zinc-800/70 dark:hover:bg-zinc-800",
                 "border border-white/18 hover:border-white/32 dark:border-zinc-700 dark:hover:border-zinc-500",
@@ -137,16 +146,25 @@ export default function ChatComposer({
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 onChange={(e) => setValue(e.target.value)}
+                onInput={resizeTextarea}
                 placeholder="Tanya sesuatu..."
                 rows={1}
                 disabled={loading}
+                aria-label="Input chat"
                 className={cn(
-                  "block w-full resize-none bg-transparent px-2",
+                  "block w-full min-h-[40px] resize-none bg-transparent px-2",
                   "text-[16px] leading-relaxed text-zinc-950/85 placeholder:text-zinc-700/60 font-light dark:text-zinc-100 dark:placeholder:text-zinc-500",
                   "border-none focus:ring-0 focus:outline-none",
                   "max-h-[160px] overflow-y-auto scrollbar-hide"
                 )}
+                onCompositionStart={() => {
+                  composingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false;
+                }}
                 onKeyDown={(e) => {
+                  if (composingRef.current || e.nativeEvent.isComposing) return;
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     submit();
@@ -167,19 +185,20 @@ export default function ChatComposer({
                 type="button"
                 onClick={submit}
                 disabled={!canSend}
+                aria-label={loading ? "Proses berjalan" : "Kirim pesan"}
                 className={cn(
-                  "relative flex items-center justify-center rounded-full",
-                  "transition-all duration-500 cubic-bezier(0.34, 1.56, 0.64, 1)",
+                  "relative flex size-10 items-center justify-center rounded-full touch-manipulation",
+                  "transition-[transform,background-color,border-color,color,opacity] duration-200 motion-reduce:transition-none",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-800/60 focus-visible:ring-offset-2 dark:focus-visible:ring-zinc-300/70 dark:focus-visible:ring-offset-zinc-900",
                   canSend
                     ? cn(
-                        "size-10",
                         "bg-black/70 text-white",
                         "border border-white/10",
                         "backdrop-blur-[8px]",
                         "shadow-[0_14px_38px_-18px_rgba(0,0,0,0.75)]",
-                        "scale-100 opacity-100 rotate-0"
+                        "scale-100 opacity-100"
                       )
-                    : "size-8 bg-white/10 text-zinc-700/50 scale-90 opacity-0 rotate-45 pointer-events-none dark:bg-zinc-800/80 dark:text-zinc-500"
+                    : "bg-white/10 text-zinc-700/50 border border-white/10 scale-100 opacity-70 dark:bg-zinc-800/80 dark:text-zinc-500 dark:border-zinc-700"
                 )}
                 title={loading ? "Stop" : "Kirim"}
               >
@@ -194,11 +213,14 @@ export default function ChatComposer({
 
         {/* Status line */}
         <div className="mt-3 flex justify-center">
-          <p className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-700/50 dark:text-zinc-400">
+          <p
+            aria-live="polite"
+            className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-700/50 dark:text-zinc-400"
+          >
             {loading ? (
               <>
                 <span className="block size-1.5 animate-pulse rounded-full bg-zinc-600/50" />
-                {deletingDoc ? "Sedang menghapus..." : "Thinking..."}
+                {deletingDoc ? "Sedang menghapus…" : "Thinking…"}
               </>
             ) : (
               "Academic AI • Context Aware"

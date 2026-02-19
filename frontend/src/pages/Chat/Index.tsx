@@ -291,7 +291,6 @@ export default function Index() {
   const [items, setItems] = useState<ChatItem[]>(initialItems);
 
   const activeSessionIdNum = typeof activeSession === "number" ? activeSession : undefined;
-  const plannerState = activeSessionIdNum ? plannerStateBySession[activeSessionIdNum] ?? null : null;
   const plannerWarning = activeSessionIdNum ? plannerWarningBySession[activeSessionIdNum] ?? null : null;
 
   // ✅ Inertia reuse fix: sinkronkan ulang items saat user/history berubah
@@ -717,7 +716,7 @@ export default function Index() {
 
   // ✅ padding bawah final: composer + safe area (CSS env) + sedikit ekstra
   // `env(safe-area-inset-bottom)` akan bekerja di iOS Safari.
-  const chatPaddingBottom = `calc(${composerH}px + env(safe-area-inset-bottom) + ${safeBottom}px + 12px)`;
+  const chatPaddingBottom = `calc(${composerH}px + env(safe-area-inset-bottom) + ${safeBottom}px + 32px)`;
 
   return (
     <div
@@ -847,6 +846,7 @@ export default function Index() {
           {/* Mobile Menu Trigger */}
           <button
             onClick={() => setMobileMenuOpen(true)}
+            aria-label="Buka panel menu"
             className={cn(
               "absolute left-4 top-4 z-30 flex size-10 items-center justify-center rounded-full shadow-sm backdrop-blur-md transition active:scale-95 md:hidden",
               dark
@@ -860,8 +860,14 @@ export default function Index() {
           {/* CHAT THREAD CONTAINER */}
           <div
             ref={scrollRef}
-            className="flex-1 min-h-0 min-w-0 w-full overflow-y-auto overscroll-contain touch-pan-y scrollbar-hide pt-20 md:pt-4"
-            style={{ paddingBottom: chatPaddingBottom }}
+            id="chat-scroll-container"
+            className="chat-scrollbar flex-1 min-h-0 min-w-0 w-full overflow-y-auto overscroll-contain touch-pan-y pt-20 md:pt-4"
+            style={{
+              paddingBottom: chatPaddingBottom,
+              scrollbarGutter: "stable",
+              scrollbarWidth: "thin",
+              scrollbarColor: dark ? "rgba(212,212,216,0.42) transparent" : "rgba(63,63,70,0.35) transparent",
+            }}
           >
             {mode === "planner" && plannerWarning && (
               <div className="mx-auto mb-3 mt-1 w-[min(900px,92%)]" data-testid="planner-warning-banner">

@@ -35,7 +35,7 @@ export default function ChatThread({
       data-testid="chat-thread"
       className="mx-auto w-full max-w-3xl min-w-0 overflow-x-hidden px-4 md:px-0"
     >
-      <div className="flex flex-col gap-6 md:gap-8">
+      <div className="flex flex-col gap-6 pb-2 md:gap-8 md:pb-4">
         {/* Date Badge */}
         <div className="pointer-events-none sticky top-0 z-10 flex justify-center py-6">
           <span className="inline-flex items-center rounded-full border border-zinc-200/50 bg-white/60 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 shadow-sm backdrop-blur-xl dark:border-zinc-700/70 dark:bg-zinc-900/75 dark:text-zinc-300">
@@ -66,7 +66,7 @@ export default function ChatThread({
         ))}
 
         {/* Dummy element scroll target */}
-        <div ref={bottomRef} className="h-px w-full mt-2" />
+        <div ref={bottomRef} className="mt-2 h-12 w-full md:h-16" />
       </div>
     </div>
   );
